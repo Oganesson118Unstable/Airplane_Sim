@@ -1,0 +1,2332 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Advanced Flight Simulator — Day / Night</title>
+<style>
+/* ============================================================
+   1. Global layout and flight HUD
+   ============================================================ */
+*{box-sizing:border-box}
+body{margin:0;overflow:hidden;background:#07111e;color:#eaf5ff;font:14px system-ui,sans-serif}
+canvas{position:fixed;inset:0;z-index:0;display:block;width:100%;height:100%;touch-action:none}
+#hud{position:fixed;inset:12px 12px auto;pointer-events:none;display:flex;justify-content:space-between;gap:10px;z-index:2}
+.panel{background:#081624df;border:1px solid #45647b;padding:12px;border-radius:10px;min-width:155px}
+h2{font-size:13px;color:#77d8ff;margin:0 0 9px}
+.value{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+.small{font-size:12px;color:#a9c4d9;line-height:1.8}
+#help{position:fixed;bottom:12px;left:12px;right:12px;text-align:center;color:white;text-shadow:0 1px 4px black;pointer-events:none;z-index:2}
+#message{color:#ffe08a}
+#bar{height:5px;background:#243d50;margin-top:6px}
+#fill{height:100%;width:0;background:#52d7ff}
+/* ============================================================
+   2. Fold-out settings and touch controls
+   ============================================================ */
+#settingsControl{position:fixed;left:0;bottom:270px;z-index:12;display:flex;flex-direction:row;align-items:flex-end;color:#eef8ff;font:12px system-ui,sans-serif;user-select:none;max-width:calc(100vw - 12px)}
+#settingsToggle{pointer-events:auto;flex:0 0 38px;width:38px;height:84px;padding:7px 5px;border:1px solid #647b91;border-left:0;border-radius:0 10px 10px 0;background:#202936ef;color:#fff;font-size:11px;font-weight:900;letter-spacing:.04em;writing-mode:vertical-rl;transform:rotate(180deg);touch-action:manipulation}
+#settingsPanel{width:0;max-width:0;max-height:none;overflow:hidden;opacity:0;transform:translateX(-12px);transition:width .22s,max-width .22s,opacity .18s,transform .22s;pointer-events:none}
+#settingsPanel.open{width:220px;max-width:220px;opacity:1;transform:translateX(0);pointer-events:auto}
+#settingsInner{width:220px;margin-left:6px;padding:12px;border:1px solid #526174;border-radius:0 12px 12px 12px;background:#101722ee;box-shadow:0 8px 24px #0005}
+#settingsInner label{display:block;margin-bottom:8px;color:#b8d1e4}
+#timeOfDay,#scopeMode{width:100%;padding:8px;border:1px solid #64748b;border-radius:7px;background:#202936;color:white;font:inherit}
+#landingLightToggle{width:100%;margin-top:9px;padding:8px;border:1px solid #64748b;border-radius:7px;background:#29394d;color:white;font:inherit;font-weight:800;touch-action:manipulation}
+#landingLightToggle[aria-pressed="true"]{background:#9a7830;color:#fff7d6}
+#flightControls{position:fixed;left:0;bottom:64px;z-index:10;display:flex;align-items:center;color:#eef8ff;font:12px system-ui,sans-serif;pointer-events:none;user-select:none}
+#keysToggle{pointer-events:auto;width:38px;min-height:84px;padding:7px 5px;border:1px solid #64748b;border-left:0;border-radius:0 10px 10px 0;color:#fff;background:#202936ef;font-size:11px;font-weight:900;writing-mode:vertical-rl;transform:rotate(180deg);touch-action:manipulation}
+#keysPanel{width:0;overflow:hidden;opacity:0;transform:translateX(-12px);transition:width .22s,opacity .18s,transform .22s;pointer-events:none}
+#keysPanel.open{width:174px;opacity:1;transform:translateX(0);pointer-events:auto}
+#keysInner{width:174px;padding:8px;border:1px solid #526174;border-left:0;border-radius:0 12px 12px 0;background:#101722ee}
+.keypad{display:grid;grid-template-columns:repeat(3,42px);grid-template-rows:repeat(3,42px);gap:4px;justify-content:center}
+.key{min-width:0;min-height:40px;padding:0;border:1px solid #64748b;border-bottom:3px solid #374151;border-radius:7px;background:linear-gradient(#374151,#202936);color:#f8fafc;font-size:16px;font-weight:900;touch-action:none;user-select:none;-webkit-tap-highlight-color:transparent}
+.key:active,.key.pressed{background:#087ca5;border-color:#75dfff}
+#wKey{grid-column:2;grid-row:1}
+#aKey{grid-column:1;grid-row:2}
+#sKey{grid-column:2;grid-row:2}
+#dKey{grid-column:3;grid-row:2}
+#qKey{grid-column:1;grid-row:3}
+#eKey{grid-column:3;grid-row:3}
+#actionRow{display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin-top:7px}
+.actionKey{min-width:0;min-height:34px;padding:4px 1px;border:1px solid #64748b;border-bottom:3px solid #374151;border-radius:6px;background:#29394d;color:white;font-size:9px;font-weight:800;touch-action:manipulation}
+.actionKey:active{background:#087ca5}
+#eplsFireButton{background:#123c65;border-color:#42aaff;color:#bfeaff}
+#eplsFireButton.firing{background:#087ca5;box-shadow:0 0 12px #168cff}
+/* ============================================================
+   3. EPLS display and throttle control
+   ============================================================ */
+#eplsScope{position:fixed;left:50%;top:50%;width:58px;height:58px;transform:translate(-50%,-50%);z-index:3;pointer-events:none;filter:drop-shadow(0 0 3px #001b00);will-change:left,top}
+#eplsScope::after{content:attr(data-label);position:absolute;left:50%;top:calc(100% + 7px);transform:translateX(-50%);font:9px ui-monospace,monospace;letter-spacing:.12em;color:var(--scope-color,#45ff55);text-shadow:0 0 4px #001b00;white-space:nowrap}
+.scope-corner{position:absolute;width:13px;height:13px;border-color:var(--scope-color,#45ff55);border-style:solid;border-width:0}
+.scope-tl{left:0;top:0;border-left-width:2px;border-top-width:2px}
+.scope-tr{right:0;top:0;border-right-width:2px;border-top-width:2px}
+.scope-bl{left:0;bottom:0;border-left-width:2px;border-bottom-width:2px}
+.scope-br{right:0;bottom:0;border-right-width:2px;border-bottom-width:2px}
+.scope-cross-x,.scope-cross-y{position:absolute;background:var(--scope-color,#45ff55);box-shadow:0 0 4px var(--scope-color,#45ff55)}
+.scope-cross-x{width:17px;height:2px;left:50%;top:50%;transform:translate(-50%,-50%);clip-path:polygon(0 0,30% 0,30% 100%,70% 100%,70% 0,100% 0,100% 100%,0 100%)}
+.scope-cross-y{width:2px;height:17px;left:50%;top:50%;transform:translate(-50%,-50%);clip-path:polygon(0 0,100% 0,100% 30%,0 30%,0 70%,100% 70%,100% 100%,0 100%)}
+.scope-center-hole{position:absolute;left:50%;top:50%;width:7px;height:7px;transform:translate(-50%,-50%);border:1px solid var(--scope-color,#45ff55);border-radius:50%;background:transparent;box-shadow:none;z-index:2}
+#throttleControl{position:fixed;right:8px;top:43%;z-index:10;width:54px;padding:8px 5px;display:flex;flex-direction:column;align-items:center;gap:5px;border:1px solid #526174;border-radius:12px;background:#101722d9;color:#eef8ff;font:10px system-ui,sans-serif;user-select:none}
+#throttleValue{font-size:12px;font-weight:900;color:#77d8ff}
+#throttleSlider{-webkit-appearance:slider-vertical;appearance:slider-vertical;writing-mode:vertical-lr;direction:rtl;width:34px;height:148px;margin:2px 0;accent-color:#52d7ff;touch-action:none;pointer-events:auto;cursor:ns-resize}
+#goHomeButton{width:100%;padding:7px 3px;border:1px solid #8ba9c1;border-radius:7px;background:linear-gradient(180deg,#344d65,#1c2d40);color:#f2f8ff;font:900 9px/1.2 system-ui,sans-serif;letter-spacing:.04em;cursor:pointer;touch-action:manipulation}
+#goHomeButton:hover{background:#42627f}
+#goHomeButton:active{transform:translateY(1px)}
+@media(max-width:600px){
+ #hud{flex-wrap:wrap}
+ .panel{min-width:0;padding:8px;flex:1}
+ .value{font-size:17px}
+ .small{font-size:10px}
+ #settingsControl{bottom:270px}
+}
+@media(max-width:380px){
+ #flightControls{bottom:54px}
+ #settingsControl{bottom:260px}
+ #keysPanel.open{width:158px}
+ #keysInner{width:158px;padding:6px}
+ .keypad{grid-template-columns:repeat(3,38px);grid-template-rows:repeat(3,38px)}
+ .key{min-height:36px}
+ #throttleControl{right:4px;width:46px;padding:6px 3px}
+ #throttleSlider{height:126px;width:34px}
+}
+@media(prefers-reduced-motion:reduce){
+ #settingsPanel,#keysPanel{transition:none}
+}
+/* ============================================================
+   4. Hangar start screen and aircraft paint selector
+   ============================================================ */
+#startScreen{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:flex-start;padding:clamp(14px,3vw,42px);gap:24px;pointer-events:none;background:linear-gradient(90deg,rgba(3,10,19,.94) 0%,rgba(3,10,19,.78) 30%,rgba(3,10,19,.22) 58%,rgba(3,10,19,.04) 100%);transition:opacity .55s ease,visibility .55s ease}
+#startScreen.hidden{opacity:0;visibility:hidden;pointer-events:none}
+#startContent{pointer-events:auto;width:min(480px,calc(100vw - 24px));max-width:480px;max-height:92vh;overflow:auto;padding:clamp(18px,2.5vw,30px);border:1px solid #9fc4df66;border-radius:18px;background:linear-gradient(145deg,#071625ed,#0b1b2be8);box-shadow:0 22px 70px #0008;backdrop-filter:blur(12px)}
+#previewHint{position:absolute;right:clamp(18px,4vw,58px);top:clamp(18px,4vh,42px);max-width:270px;text-align:right;color:#f3f8fc;text-shadow:0 2px 8px #000;font-size:11px;line-height:1.7;letter-spacing:.08em;pointer-events:none}
+#previewHint strong{display:block;color:#a9e8ff;font-size:13px;letter-spacing:.16em}
+#colorGradient{height:190px;width:100%;margin:14px 0 9px;border:2px solid #ffffff88;border-radius:10px;cursor:crosshair;touch-action:none;position:relative;overflow:hidden;background:linear-gradient(to top,#000 0%,transparent 50%,#fff 100%),linear-gradient(to right,#f00 0%,#ff0 16.6%,#0f0 33.3%,#0ff 50%,#00f 66.6%,#f0f 83.3%,#f00 100%);box-shadow:inset 0 0 0 1px #0005,0 5px 18px #0006}
+#colorGradient:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,#fff2,transparent);pointer-events:none}
+#colorPickerReadout{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px;color:#b6cde0}
+#selectedColorChip{width:30px;height:18px;border:1px solid #ffffff99;border-radius:5px;background:#e8edf0;flex:0 0 auto}
+#colorPaletteWrap{max-height:0;overflow:hidden;opacity:0;transition:max-height .3s ease,opacity .25s ease}
+#colorPaletteWrap.open{max-height:300px;opacity:1}
+#menuHint{font-size:11px;line-height:1.6;color:#8fa9bd;margin:14px 0 0}
+@media(max-width:760px){#startScreen{align-items:flex-end;padding:10px}#startContent{width:min(440px,calc(100vw - 20px));max-width:440px;max-height:88vh;padding:15px}#previewHint{top:12px;right:12px;max-width:42vw;font-size:9px}#colorGradient{height:145px}}
+@media(max-width:520px){#startScreen{align-items:flex-end;justify-content:center;background:linear-gradient(0deg,rgba(3,10,19,.96) 0%,rgba(3,10,19,.78) 48%,rgba(3,10,19,.08) 100%)}#startContent{width:calc(100vw - 20px);max-width:410px;max-height:63vh;padding:14px}#previewHint{top:10px;right:12px;max-width:55vw}#startTitle{font-size:29px}#colorGradient{height:110px}}
+#startEyebrow{font-size:11px;letter-spacing:.24em;color:#83d9ff;font-weight:900;margin-bottom:12px}
+#startTitle{font-size:clamp(30px,5vw,56px);line-height:.98;letter-spacing:-.045em;margin:0;color:#f4f9ff;text-shadow:0 3px 18px #0008}
+#startSubtitle{margin:15px 0 22px;color:#b7d2e5;font-size:12px;letter-spacing:.16em;font-weight:800}
+#aircraftStatus{display:flex;align-items:center;gap:9px;color:#b9d7e9;font-size:11px;letter-spacing:.12em;margin-bottom:24px}
+#aircraftStatus:before{content:"";width:8px;height:8px;border-radius:50%;background:#55e6a5;box-shadow:0 0 12px #55e6a5}
+.startButton{width:100%;padding:15px 18px;border:1px solid #8ce2ff;border-radius:9px;background:linear-gradient(100deg,#087ca8,#13a9c8);color:white;font-weight:950;letter-spacing:.13em;font-size:14px;cursor:pointer;box-shadow:0 8px 28px #008bb955;touch-action:manipulation}
+.startButton:hover{filter:brightness(1.14)}
+#colorToggle{width:100%;margin-top:11px;padding:13px 16px;border:1px solid #7895ad;border-radius:9px;background:#172b3ddd;color:#eaf6ff;font-size:12px;font-weight:900;letter-spacing:.08em;cursor:pointer;touch-action:manipulation}
+#colorPaletteWrap{max-height:0;overflow:hidden;opacity:0;transition:max-height .3s ease,opacity .25s ease}
+#colorPaletteWrap.open{max-height:360px;opacity:1}
+#colorPalette{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:7px;padding:14px 2px 8px;max-width:100%}
+.colorSwatch{aspect-ratio:1;border:2px solid #ffffff55;border-radius:7px;cursor:pointer;min-width:0;box-shadow:0 2px 8px #0005;touch-action:manipulation}
+.colorSwatch[aria-pressed="true"]{outline:2px solid white;outline-offset:2px;transform:scale(.94)}
+#selectedColorLabel{font-size:11px;color:#b6cde0;text-align:right;padding:0 2px 4px}
+#surfaceFinishLabel{display:block;margin:7px 0 4px;color:#a9c4d9;font-size:9px;font-weight:900;letter-spacing:.12em}
+#surfaceFinish{width:100%;padding:7px 9px;border:1px solid #647b91;border-radius:7px;background:#172b3d;color:#eef8ff;font:10px system-ui,sans-serif}
+#menuHint{font-size:11px;line-height:1.6;color:#8fa9bd;margin:17px 0 0}
+body.menu-active #hud,body.menu-active #help,body.menu-active #settingsControl,body.menu-active #flightControls,body.menu-active #throttleControl,body.menu-active #eplsScope{display:none!important}
+@media(max-width:600px){#startScreen{align-items:flex-end;padding:12px}#startContent{max-height:84vh;padding:18px}#colorPalette{grid-template-columns:repeat(9,minmax(0,1fr));gap:6px}#startTitle{font-size:34px}}
+
+/* Compact top palette and flatter in-flight HUD */
+#startScreen{
+ align-items:flex-start;
+ justify-content:center;
+ padding:12px 16px;
+ background:linear-gradient(180deg,rgba(3,10,19,.78) 0%,rgba(3,10,19,.36) 17%,rgba(3,10,19,0) 34%);
+}
+#startContent{
+ width:min(900px,calc(100vw - 32px));
+ max-height:34vh;
+ overflow:auto;
+ padding:10px 16px 9px;
+ border-radius:12px;
+ background:linear-gradient(145deg,rgba(7,22,37,.94),rgba(11,27,43,.88));
+ box-shadow:0 8px 28px #0005;
+}
+#startEyebrow{font-size:9px;margin-bottom:4px;letter-spacing:.2em}
+#startTitle{font-size:clamp(19px,2.5vw,28px);line-height:1;margin:0}
+#startSubtitle{display:inline-block;margin:5px 12px 5px 0;font-size:9px}
+#aircraftStatus{display:inline-flex;margin:0 10px 0 0;font-size:9px}
+#startFlightButton,#colorToggle{
+ width:auto;
+ min-height:32px;
+ padding:7px 12px;
+ margin:4px 6px 4px 0;
+ font-size:10px;
+}
+#colorPaletteWrap.open{max-height:420px}
+#colorGradient{height:76px;margin:6px 0 4px}
+#colorPickerReadout{font-size:9px}
+#selectedColorChip{width:24px;height:14px}
+#selectedColorLabel{font-size:9px}
+#menuHint{margin:5px 0 0;font-size:9px;line-height:1.35}
+#previewHint{top:auto;right:18px;bottom:18px;max-width:260px;text-align:right}
+#hud{
+ inset:8px 10px auto;
+ align-items:flex-start;
+ justify-content:flex-start;
+ gap:5px;
+}
+#hud .panel{
+ display:flex;
+ flex-wrap:wrap;
+ align-items:center;
+ column-gap:10px;
+ row-gap:2px;
+ min-width:0;
+ padding:4px 8px;
+ border:0;
+ border-radius:3px;
+ background:rgba(5,17,29,.48);
+ box-shadow:none;
+}
+#hud .panel h2{
+ flex:0 0 100%;
+ margin:0 0 1px;
+ font-size:9px;
+ line-height:1.2;
+ letter-spacing:.1em;
+}
+#hud .panel .small{
+ font-size:10px;
+ line-height:1.35;
+ white-space:nowrap;
+}
+#hud .panel .value{
+ font-size:17px;
+ line-height:1.1;
+}
+#hud .panel .value small{font-size:9px}
+#hud #bar{width:54px;height:4px;margin:0}
+@media(max-width:760px){
+ #startContent{width:calc(100vw - 20px);max-height:38vh;padding:9px 12px}
+ #startTitle{font-size:22px}
+ #colorGradient{height:62px}
+ #previewHint{bottom:12px;right:12px}
+ #hud{gap:4px}
+ #hud .panel{padding:4px 7px;column-gap:8px}
+}
+ #startContent{width:calc(100vw - 14px);max-height:42vh;padding:8px 10px}
+ #startEyebrow{font-size:8px}
+ #startTitle{font-size:19px}
+ #startSubtitle{font-size:8px}
+ #aircraftStatus{font-size:8px;margin-right:4px}
+ #startFlightButton,#colorToggle{font-size:9px;padding:6px 8px}
+ #colorGradient{height:52px}
+ #menuHint{font-size:8px}
+ #previewHint{max-width:50vw;font-size:8px}
+ #hud{inset:7px 7px auto;gap:3px;flex-wrap:wrap}
+ #hud .panel{padding:4px 6px;column-gap:6px}
+}
+
+#colorGradient{position:relative}
+#paletteMagnifier{position:absolute;width:34px;height:34px;border:3px solid #fff;border-radius:50%;box-shadow:0 2px 9px #000b;pointer-events:none;z-index:3;transform:translate(-50%,-50%);background:#e8edf0;left:50%;top:50%;display:none}
+#paintControls{margin-top:7px;display:grid;gap:4px;font-size:9px;color:#a9c4d9}
+#paintControls>label,#camoColors label,.paintColorRow label{font-size:8px;letter-spacing:.1em;font-weight:900}
+#paintMode{width:100%;padding:6px;border:1px solid #647b91;border-radius:6px;background:#172b3d;color:#eef8ff;font:10px system-ui,sans-serif}
+.paintColorRow{display:grid;grid-template-columns:auto 38px auto 38px;align-items:center;justify-content:start;justify-items:start;gap:5px 7px}.paintColorRow label{white-space:nowrap;min-width:0}.paintColorRow input{grid-row:auto}
+.paintColorRow input,#camoColors input{width:34px;height:25px;padding:1px;border:1px solid #7895ad;border-radius:5px;background:#172b3d}
+#paintBoundary{width:100%;accent-color:#52d7ff}
+#camoColors{display:none;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}
+#camoColors>div{display:flex;flex-direction:column;gap:3px;align-items:center}
+#camoColors input{width:100%;max-width:48px}
+#paintControls.camo #camoColors{display:grid}
+#paintControls.camo .paintColorRow,#paintControls.camo>label[for="paintBoundary"],#paintControls.camo #paintBoundary{display:none}
+#radarDock{position:fixed!important;left:auto!important;top:auto!important;right:12px!important;bottom:12px!important;transform:none!important;margin:0!important;z-index:15;display:flex;flex-direction:row-reverse;align-items:flex-end;gap:8px;font:11px system-ui,sans-serif;pointer-events:auto}
+#radarToggle{padding:9px 12px;border:1px solid #8ca9bf;border-radius:8px;background:#101d2ddd;color:#eaf6ff;font-weight:900;letter-spacing:.08em;touch-action:manipulation}
+#radarPanel{display:none;width:250px;padding:10px;border:1px solid #718ba1;border-radius:12px;background:#081624ed;box-shadow:0 8px 25px #0008}
+#radarPanel.open{display:block}
+#radarHeader{display:flex;justify-content:space-between;gap:8px;margin-bottom:6px;color:#d7efff;font-size:10px;font-weight:900;letter-spacing:.1em}
+#radarCanvas{display:block;width:220px;height:220px;max-width:100%;margin:auto;border:1px solid #7894a9;border-radius:50%;background:#07111b}
+#radarLegend{margin-top:6px;color:#b7c9d8;font-size:9px;line-height:1.45}
+body.menu-active #radarDock{display:none}
+@media(max-width:600px){#radarDock{right:6px;bottom:8px}#radarPanel{width:224px}#radarCanvas{width:198px;height:198px}}
+</style>
+</head>
+<body class="menu-active">
+<div id="startScreen">
+ <div id="startContent">
+  <div id="startEyebrow">FLIGHT OPERATIONS SYSTEM</div>
+  <h1 id="startTitle">ADVANCED<br>FLIGHT SIMULATOR</h1>
+  <div id="startSubtitle">FLIGHT OPERATIONS · DAY / NIGHT</div>
+  <div id="aircraftStatus">AIRCRAFT READY · HANGAR 01</div>
+  <button id="startFlightButton" class="startButton" type="button">START FLIGHT</button>
+  <button id="colorToggle" type="button" aria-expanded="true">AIRCRAFT PAINT　－</button>
+  <div id="colorPaletteWrap" class="open">
+   <div id="colorGradient" role="slider" aria-label="Smooth aircraft color palette" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" tabindex="0"><div id="paletteMagnifier" aria-hidden="true"></div></div>
+   <div id="colorPickerReadout"><span id="selectedColorLabel">TOP: #E8EDF0</span><span id="selectedColorChip"></span></div>
+   <div id="paintControls">
+    <label for="paintMode">PAINT LAYOUT</label>
+    <select id="paintMode"><option value="two-tone" selected>Two-tone upper / lower</option><option value="camo">Four-color camouflage</option></select>
+    <div class="paintColorRow">
+      <label for="topColorInput">TOP COLOR:</label><input id="topColorInput" type="color" value="#e8edf0" aria-label="Top color">
+      <label for="bottomColorInput">BOTTOM COLOR:</label><input id="bottomColorInput" type="color" value="#3b4c58" aria-label="Bottom color">
+     </div>
+    <label for="paintBoundary">UPPER / LOWER DIVIDING LINE</label><input id="paintBoundary" type="range" min="-0.45" max="0.45" step="0.01" value="0">
+    <div id="camoColors">
+     <div><label for="camoColor1">CAMO 1</label><input id="camoColor1" type="color" value="#4b6042"></div>
+     <div><label for="camoColor2">CAMO 2</label><input id="camoColor2" type="color" value="#6b7047"></div>
+     <div><label for="camoColor3">CAMO 3</label><input id="camoColor3" type="color" value="#69513c"></div>
+     <div><label for="camoColor4">CAMO 4</label><input id="camoColor4" type="color" value="#b4a47b"></div>
+    </div>
+    <div class="small" id="camoPresetNote">Classic default: RAF Temperate Land. All four colors are independently editable.</div>
+   </div>
+  </div>
+
+  <label id="surfaceFinishLabel" for="surfaceFinish">AIRCRAFT SURFACE FINISH</label>
+  <select id="surfaceFinish">
+   <option value="standard" selected>Standard paint</option>
+   <option value="polished">Polished aluminium</option>
+   <option value="matte">Matte finish</option>
+   <option value="weathered">Weathered metal</option>
+  </select>
+
+  <p id="menuHint">Drag across the gradient to choose a finish. The fuselage, wings and flaps change together; cockpit glass, landing gear and propeller keep their original colors.</p>
+ </div>
+ <div id="previewHint"><strong>HANGAR PREVIEW</strong>DRAG TO ROTATE · PINCH / WHEEL TO ZOOM<br>Grey workshop floor · tools and equipment</div>
+</div>
+<div id="settingsControl">
+ <button id="settingsToggle" type="button" aria-expanded="false">SETTINGS ›</button>
+ <div id="settingsPanel">
+  <div id="settingsInner">
+   <label for="timeOfDay">Time of day</label>
+   <select id="timeOfDay">
+    <option value="day" selected>Day</option>
+    <option value="night">Night</option>
+   </select>
+   <div class="small" id="lightingDescription">Bright daylight lighting</div>
+   <button id="landingLightToggle" type="button" aria-pressed="false">LANDING LIGHT: OFF</button>
+  </div>
+ </div>
+</div>
+<div id="hud">
+ <div class="panel">
+  <h2>FLIGHT DATA</h2>
+  <div class="small">AIRSPEED</div>
+  <div class="value"><span id="speed">0</span> <small>km/h</small></div>
+  <div class="small">ALTITUDE <b id="alt">0</b> m</div>
+  <div class="small">VERTICAL SPEED <b id="vs">0</b> m/s</div>
+  <div class="small">HEADING <b id="hdg">000</b>°</div>
+  <div class="small">ANGLE OF ATTACK <b id="aoa">0.0</b>°</div>
+  <div class="small">AERODYNAMICS <b id="aero">NORMAL</b></div>
+ </div>
+ <div class="panel">
+  <h2>ENGINE / SYSTEMS</h2>
+  <div class="small">THROTTLE <b id="thr">5</b>%</div>
+  <div id="bar"><div id="fill"></div></div>
+  <div class="small">FLAPS <b id="flap">OFF</b></div>
+  <div class="small">GEAR <b id="gear">DOWN</b></div>
+  <div class="small">FLIGHT STATE <b id="state">GROUND</b></div>
+  <div class="small">GROUND CONTACT <b id="contactState">CLEAR</b></div>
+  <div class="small">WATER <b id="waterState">DRY</b></div>
+ </div>
+ <span id="eplsStatus" hidden>STANDBY</span>
+</div>
+<div id="radarDock">
+ <button id="radarToggle" type="button" aria-expanded="false">RADAR ›</button>
+ <div id="radarPanel">
+  <div id="radarHeader"><span>TERRAIN RADAR</span><span>RANGE 800 m</span></div>
+  <canvas id="radarCanvas" width="440" height="440" aria-label="Terrain radar centered on aircraft"></canvas>
+  <div id="radarLegend">White hatching: terrain above the aircraft's level plane (0 m reference). No traffic markers.</div>
+ </div>
+</div>
+<div id="eplsScope" aria-hidden="true">
+ <span class="scope-corner scope-tl"></span><span class="scope-corner scope-tr"></span>
+ <span class="scope-corner scope-bl"></span><span class="scope-corner scope-br"></span>
+ <span class="scope-cross-x"></span><span class="scope-cross-y"></span>
+ <span class="scope-center-hole"></span>
+</div>
+<div id="help">
+ <div id="message">Click to fly · drag to orbit around the aircraft center · pinch / wheel to zoom</div>
+ W/S pitch · A/D roll · Q/E yaw · ↑/↓ throttle · F flaps · G gear · B scope · HOLD SPACE / EPLS FIRE
+</div>
+<div id="flightControls">
+ <button id="keysToggle" type="button" aria-expanded="false">KEYS ›</button>
+ <div id="keysPanel">
+  <div id="keysInner">
+   <div class="keypad">
+    <button class="key" id="wKey" data-hold="w" type="button">W</button>
+    <button class="key" id="aKey" data-hold="a" type="button">A</button>
+    <button class="key" id="sKey" data-hold="s" type="button">S</button>
+    <button class="key" id="dKey" data-hold="d" type="button">D</button>
+    <button class="key" id="qKey" data-hold="q" type="button">Q</button>
+    <button class="key" id="eKey" data-hold="e" type="button">E</button>
+   </div>
+   <div id="actionRow">
+    <button class="actionKey" data-action="f" type="button">FLAPS</button>
+    <button class="actionKey" data-action="g" type="button">GEAR</button>
+    <button class="actionKey" data-action="light" type="button">LIGHT</button>
+    <button class="actionKey" data-action="r" type="button">RESET</button>
+    <button class="actionKey" id="scopeToggle" type="button" aria-label="Switch scope mode (B)">SCOPE</button>
+    <button class="actionKey" id="eplsFireButton" type="button">EPLS FIRE</button>
+   </div>
+  </div>
+ </div>
+</div>
+<div id="throttleControl">
+ <div>THROTTLE %</div>
+ <div id="throttleValue">5%</div>
+ <input id="throttleSlider" type="range" min="0" max="100" step="1" value="5">
+ <button id="goHomeButton" type="button">GO TO HOME</button>
+</div>
+<script type="module">
+
+let THREE;
+try {
+ THREE = await import('https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js');
+} catch (cdnError) {
+ try {
+  THREE = await import('https://unpkg.com/three@0.180.0/build/three.module.js');
+ } catch (fallbackError) {
+  const errorBox=document.createElement('div');
+  errorBox.style.cssText='position:fixed;inset:20px;z-index:99999;padding:22px;border:1px solid #ff8b8b;border-radius:12px;background:#180d12;color:#fff;font:14px/1.6 system-ui,sans-serif;white-space:pre-wrap;overflow:auto';
+  errorBox.textContent='3D ENGINE COULD NOT LOAD\n\nThe browser could not download Three.js from either CDN. Check your internet connection and reload this page.\n\n'+String(fallbackError);
+  document.body.appendChild(errorBox);
+  throw fallbackError;
+ }
+}
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x86c9ef);
+scene.fog = new THREE.Fog(0x86c9ef,6500,23000);
+const camera = new THREE.PerspectiveCamera(65,innerWidth/innerHeight,.1,30000);
+let renderer;
+try {
+ renderer = new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
+} catch (webglError) {
+ const errorBox=document.createElement('div');
+ errorBox.style.cssText='position:fixed;inset:20px;z-index:99999;padding:22px;border:1px solid #ff8b8b;border-radius:12px;background:#180d12;color:#fff;font:14px/1.6 system-ui,sans-serif;white-space:pre-wrap;overflow:auto';
+ errorBox.textContent='WEBGL IS NOT AVAILABLE\n\nThe Three.js engine loaded, but this browser could not create a WebGL graphics context. Enable hardware acceleration in the browser settings, update the graphics driver, and reload.\n\n'+String(webglError);
+ document.body.appendChild(errorBox);
+ throw webglError;
+}
+renderer.setSize(innerWidth,innerHeight);
+renderer.domElement.style.position='fixed';
+renderer.domElement.style.inset='0';
+renderer.domElement.style.width='100vw';
+renderer.domElement.style.height='100vh';
+renderer.domElement.style.zIndex='0';
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+document.body.appendChild(renderer.domElement);
+const hemiLight = new THREE.HemisphereLight(0xd7edff,0x475a39,2);
+scene.add(hemiLight);
+const sun = new THREE.DirectionalLight(0xfff0d4,3);
+sun.position.set(-300,700,-400);
+sun.castShadow = true;
+scene.add(sun);
+// Procedural equirectangular environment: broad bright/dark bands create visible metal reflections.
+const reflectionCanvas=document.createElement('canvas');
+reflectionCanvas.width=1024;reflectionCanvas.height=512;
+const reflectionCtx=reflectionCanvas.getContext('2d');
+const reflectionGradient=reflectionCtx.createLinearGradient(0,0,0,512);
+reflectionGradient.addColorStop(0,'#8fa9c4');reflectionGradient.addColorStop(.22,'#dce8f1');
+reflectionGradient.addColorStop(.36,'#f8fbff');reflectionGradient.addColorStop(.43,'#596b7c');
+reflectionGradient.addColorStop(.53,'#1b2632');reflectionGradient.addColorStop(.64,'#a8b7c5');
+reflectionGradient.addColorStop(.78,'#eef4f8');reflectionGradient.addColorStop(1,'#64788b');
+reflectionCtx.fillStyle=reflectionGradient;reflectionCtx.fillRect(0,0,1024,512);
+for(let i=0;i<9;i++){
+ const y=35+i*53;reflectionCtx.fillStyle=i%2?'rgba(255,255,255,.32)':'rgba(8,18,30,.28)';
+ reflectionCtx.fillRect(0,y,1024,18+((i*13)%24));
+}
+const reflectionTexture=new THREE.CanvasTexture(reflectionCanvas);
+reflectionTexture.mapping=THREE.EquirectangularReflectionMapping;
+reflectionTexture.colorSpace=THREE.SRGBColorSpace;
+scene.environment=reflectionTexture;
+scene.environmentIntensity=1.0;
+const mat = (color,roughness=.8)=>new THREE.MeshStandardMaterial({color,roughness,metalness:.05});
+const runwayMat = mat(0x333b45);
+const whiteMat = mat(0xf4f4e9);
+const darkMat = mat(0x202a35);
+const tireMat = mat(0x16191b);
+function box(parent,w,h,d,material,x,y,z){
+ const mesh = new THREE.Mesh(new THREE.BoxGeometry(w,h,d),material);
+ mesh.position.set(x,y,z);
+ mesh.castShadow=true;
+ mesh.receiveShadow=true;
+ parent.add(mesh);
+ return mesh;
+}
+function cylinder(parent,r1,r2,len,material,x,y,z,rz=0){
+ const mesh = new THREE.Mesh(new THREE.CylinderGeometry(r1,r2,len,12),material);
+ mesh.position.set(x,y,z);
+ mesh.rotation.z=rz;
+ mesh.castShadow=true;
+ parent.add(mesh);
+ return mesh;
+}
+/* ============================================================
+   TERRAIN AND WORLD GENERATION
+   ============================================================ */
+const TERRAIN_BASE=-1, RUNWAY_HEIGHT=.075, GROUND_CLEARANCE=1.25;
+// Terrain is streamed in square chunks around the aircraft.
+const CHUNK_SIZE = 1400;
+const CHUNK_SEGMENTS = 56;
+const CHUNK_RADIUS = 3;
+const terrainChunks=new Map();
+const LAKE_GRID=3500;
+const LAKE_SHORE=0.28;
+const lakeWaterMaterial=new THREE.MeshPhysicalMaterial({
+ color:0x167caa,roughness:.19,metalness:.08,transparent:true,opacity:.78,
+ transmission:.08,clearcoat:.85,clearcoatRoughness:.12,side:THREE.DoubleSide
+});
+const lakeDeepMaterial=new THREE.MeshBasicMaterial({
+ color:0x063d65,transparent:true,opacity:.16,side:THREE.DoubleSide,depthWrite:false
+});
+function getLakeDescriptor(gx,gz){
+ const seed=hash2(gx+731,gz-419);
+ if(seed<.14)return null;
+ const centerX=(gx+.2+hash2(gx+19,gz+7)*.6)*LAKE_GRID;
+ const centerZ=(gz+.2+hash2(gx-11,gz+31)*.6)*LAKE_GRID;
+ const radiusX=260+hash2(gx+51,gz+13)*340;
+ const radiusZ=310+hash2(gx+5,gz+67)*430;
+ const waterLevel=7+hash2(gx+91,gz-23)*17;
+ return {centerX,centerZ,radiusX,radiusZ,waterLevel,gx,gz,phase:hash2(gx+137,gz-83)*Math.PI*2};
+}
+function lakeInfoAt(x,z){
+ const gx=Math.floor(x/LAKE_GRID),gz=Math.floor(z/LAKE_GRID);
+ for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++){
+  const lake=getLakeDescriptor(gx+dx,gz+dz);
+  if(!lake)continue;
+  const nx=(x-lake.centerX)/lake.radiusX;
+  const nz=(z-lake.centerZ)/lake.radiusZ;
+  const angle=Math.atan2(nz,nx);
+  const rawRadius=Math.sqrt(nx*nx+nz*nz);
+  const boundary=1+
+   .065*Math.sin(angle*3+lake.phase)+
+   .035*Math.sin(angle*5-lake.phase*.7)+
+   .018*Math.sin(angle*8+lake.phase*1.3);
+  const r=rawRadius/boundary;
+  if(r<1.28)return {...lake,radius:r,rawRadius,angle,boundary};
+ }
+ return null;
+}
+function hash2(ix,iz){
+ let n=Math.imul(ix,374761393)+Math.imul(iz,668265263);
+ n=Math.imul(n^(n>>>13),1274126177);
+ return ((n^(n>>>16))>>>0)/4294967295;
+}
+function smoothNoise(x,z){
+ const ix=Math.floor(x),iz=Math.floor(z),fx=x-ix,fz=z-iz;
+ const u=fx*fx*(3-2*fx),v=fz*fz*(3-2*fz);
+ const a=hash2(ix,iz)*2-1,b=hash2(ix+1,iz)*2-1;
+ const c=hash2(ix,iz+1)*2-1,d=hash2(ix+1,iz+1)*2-1;
+ return (a+(b-a)*u)*(1-v)+(c+(d-c)*u)*v;
+}
+function rawTerrainHeight(x,z){
+ // Low-frequency domain warping breaks up parallel ridges without creating
+ // chunk seams: every sample is derived from absolute world coordinates.
+ const warpX=smoothNoise(x*.00072+31,z*.00072-17)*285+
+  smoothNoise(x*.00135-91,z*.00135+53)*72;
+ const warpZ=smoothNoise(x*.00072-63,z*.00072+47)*285+
+  smoothNoise(x*.00135+27,z*.00135-109)*72;
+ const wx=x+warpX,wz=z+warpZ;
+ const continental=smoothNoise(wx*.00031,wz*.00031);
+ const broad=smoothNoise(wx*.00059+17,wz*.00059-29);
+ const hills=smoothNoise(wx*.00135-71,wz*.00135+43);
+ const mountainMask=Math.max(0,continental*.55+broad*.68+.17);
+ const ridgeField=1-Math.abs(smoothNoise(wx*.00175+113,wz*.00175-61));
+ const ridgeWidth=.34+(.5+.5*smoothNoise(wx*.00083+211,wz*.00083-137))*.28;
+ const secondaryPeaks=Math.pow(Math.max(0,ridgeField-ridgeWidth),1.8)*145;
+ const ridgeFine=1-Math.abs(smoothNoise(wx*.00355-37,wz*.00355+89));
+ const sharpRidges=Math.pow(Math.max(0,ridgeFine-.49),2.35)*52;
+ const valleyNoise=smoothNoise(wx*.00105+301,wz*.00105+19);
+ const valleyCarve=Math.pow(Math.max(0,-valleyNoise-.12),1.6)*42;
+ const detail=smoothNoise(wx*.009,z*.009);
+ const fine=smoothNoise(wx*.024,wz*.024);
+ const micro=smoothNoise(wx*.061,wz*.061);
+ const mainMass=Math.pow(mountainMask,1.72)*315;
+ const rollingFoothills=(1-Math.min(1,mountainMask*1.3))*hills*43;
+ const isolatedPeak=Math.pow(Math.max(0,smoothNoise(wx*.00095-411,wz*.00095+233)-.43),2.2)*125;
+ return TERRAIN_BASE+continental*28+broad*24+rollingFoothills+
+  mainMass+secondaryPeaks+sharpRidges+isolatedPeak-valleyCarve+
+  detail*7.5+fine*2.6+micro*.65;
+}
+function getTerrainHeight(x,z){
+ const outsideDistance=Math.max(Math.max(0,Math.abs(x)-15),Math.max(0,Math.abs(z)-1200));
+ let height;
+ if(outsideDistance<=0)height=TERRAIN_BASE;
+ else{
+  const blend=Math.max(0,Math.min(1,outsideDistance/65));
+  const smoothBlend=blend*blend*(3-2*blend);
+  height=TERRAIN_BASE+(rawTerrainHeight(x,z)-TERRAIN_BASE)*smoothBlend;
+ }
+ const lake=lakeInfoAt(x,z);
+ if(lake){
+  const lakeBed=lake.waterLevel-26;
+  const innerEdge=.76;
+  const waterEdge=1.0;
+  const shoreEnd=1.28;
+  if(lake.radius<=innerEdge){
+   height=Math.min(height,lakeBed);
+  }else if(lake.radius<=waterEdge){
+   const t=(lake.radius-innerEdge)/(waterEdge-innerEdge);
+   const smooth=t*t*(3-2*t);
+   height=THREE.MathUtils.lerp(lakeBed,lake.waterLevel-.32,smooth);
+  }else{
+   const t=(lake.radius-waterEdge)/(shoreEnd-waterEdge);
+   const smooth=t*t*(3-2*t);
+   height=THREE.MathUtils.lerp(lake.waterLevel-.32,height,smooth);
+  }
+ }
+ return height;
+}
+function getGroundHeight(x,z){
+ return Math.abs(x)<=15&&Math.abs(z)<=1200?RUNWAY_HEIGHT:getTerrainHeight(x,z);
+}
+function createLakeSurface(lake){
+ const group=new THREE.Group();
+ const segments=96;
+ const rings=12;
+ const positions=[];
+ const indices=[];
+ for(let ring=0;ring<=rings;ring++){
+  const radius=ring/rings;
+  for(let i=0;i<segments;i++){
+   const angle=i/segments*Math.PI*2;
+   const boundary=1+
+    .065*Math.sin(angle*3+lake.phase)+
+    .035*Math.sin(angle*5-lake.phase*.7)+
+    .018*Math.sin(angle*8+lake.phase*1.3);
+   const x=Math.cos(angle)*lake.radiusX*radius*boundary;
+   const z=Math.sin(angle)*lake.radiusZ*radius*boundary;
+   const ripple=(Math.sin(x*.012+lake.phase)+Math.cos(z*.014-lake.phase))*.025*radius;
+   positions.push(x,lake.waterLevel+ripple,z);
+  }
+ }
+ for(let ring=0;ring<rings;ring++){
+  for(let i=0;i<segments;i++){
+   const a=ring*segments+i;
+   const b=ring*segments+(i+1)%segments;
+   const c=(ring+1)*segments+i;
+   const d=(ring+1)*segments+(i+1)%segments;
+   indices.push(a,c,b,b,c,d);
+  }
+ }
+ const geometry=new THREE.BufferGeometry();
+ geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+ geometry.setIndex(indices);
+ geometry.computeVertexNormals();
+ geometry.computeBoundingSphere();
+ const surface=new THREE.Mesh(geometry,lakeWaterMaterial);
+ surface.position.set(lake.centerX,0,lake.centerZ);
+ surface.receiveShadow=true;
+ group.add(surface);
+ return group;
+}
+const terrainMaterial=new THREE.MeshStandardMaterial({
+ color:0xffffff,vertexColors:true,roughness:1,metalness:0,
+ side:THREE.DoubleSide
+});
+const terrainColors={
+ low:new THREE.Color(0x496b3c),
+ grass:new THREE.Color(0x78934b),
+ meadow:new THREE.Color(0x91a653),
+ high:new THREE.Color(0x888879),
+ rock:new THREE.Color(0x77766b),
+ snow:new THREE.Color(0xd7dedb),
+ dry:new THREE.Color(0x9b895e)
+};
+function terrainVertexColor(height,slope,x=0,z=0){
+ const c=new THREE.Color();
+ const patch=smoothNoise(x*.0018+413,z*.0018-217);
+ const fine=smoothNoise(x*.009+91,z*.009+73);
+ if(height>245){
+  c.copy(terrainColors.high).lerp(terrainColors.snow,THREE.MathUtils.clamp((height-245)/150,0,.9));
+ }else if(slope>.72){
+  c.copy(terrainColors.rock).lerp(terrainColors.high,THREE.MathUtils.clamp((height-12)/75,0,.45));
+ }else if(height>85){
+  c.copy(terrainColors.grass).lerp(terrainColors.high,THREE.MathUtils.clamp((height-85)/160,0,.82));
+ }else{
+  c.copy(terrainColors.low).lerp(terrainColors.grass,THREE.MathUtils.clamp((height+3)/25,0,1));
+  c.lerp(terrainColors.meadow,THREE.MathUtils.clamp((patch+.12)*.34,0,.32));
+  c.lerp(terrainColors.dry,THREE.MathUtils.clamp((fine-.48)*.22,0,.13));
+ }
+ const variation=1+(patch*.055)+(fine*.025);
+ c.multiplyScalar(variation);
+ return c;
+}
+function createVegetation(cx,cz){
+ const group=new THREE.Group();
+ const grassCount=110;
+ const grassGeo=new THREE.ConeGeometry(.55,2.8,4);
+ const grassMat=new THREE.MeshStandardMaterial({color:0x719348,roughness:1});
+ const grass=new THREE.InstancedMesh(grassGeo,grassMat,grassCount);
+ const dummy=new THREE.Object3D();
+ let tufts=0;
+ for(let i=0;i<grassCount*4&&tufts<grassCount;i++){
+  const seedX=cx*3571+i*23+5,seedZ=cz*4421-i*31+11;
+  const x=cx*CHUNK_SIZE+hash2(seedX,seedZ)*CHUNK_SIZE;
+  const z=cz*CHUNK_SIZE+hash2(seedX+61,seedZ+97)*CHUNK_SIZE;
+  if(Math.abs(x)<25&&Math.abs(z)<1220)continue;
+  const lake=lakeInfoAt(x,z);
+  if(lake&&lake.radius<1.12)continue;
+  const y=getTerrainHeight(x,z);
+  if(y<-1||y>95)continue;
+  const scale=.45+hash2(seedX+8,seedZ+6)*.85;
+  dummy.position.set(x-cx*CHUNK_SIZE,y+scale*1.1,z-cz*CHUNK_SIZE);
+  dummy.rotation.set(0,hash2(seedX+4,seedZ+3)*Math.PI*2,0);
+  dummy.scale.set(scale,scale,scale);
+  dummy.updateMatrix();
+  grass.setMatrixAt(tufts,dummy.matrix);
+  const tint=new THREE.Color().setHSL(
+   .22+hash2(seedX+14,seedZ+16)*.13,
+   .35,
+   .30+hash2(seedX+19,seedZ+2)*.17
+  );
+  grass.setColorAt(tufts,tint);
+  tufts++;
+ }
+ if(tufts){
+  grass.count=tufts;
+  grass.instanceMatrix.needsUpdate=true;
+  group.add(grass);
+ }
+ return group;
+}
+function createTerrainChunk(cx,cz){
+ const positions=[],colors=[],indices=[];
+ const step=CHUNK_SIZE/CHUNK_SEGMENTS;
+ for(let iz=0;iz<=CHUNK_SEGMENTS;iz++){
+  for(let ix=0;ix<=CHUNK_SEGMENTS;ix++){
+   const lx=ix*step,lz=iz*step;
+   const wx=cx*CHUNK_SIZE+lx,wz=cz*CHUNK_SIZE+lz;
+   const h=getTerrainHeight(wx,wz);
+   const sample=10;
+   const dx=getTerrainHeight(wx+sample,wz)-getTerrainHeight(wx-sample,wz);
+   const dz=getTerrainHeight(wx,wz+sample)-getTerrainHeight(wx,wz-sample);
+   const slope=Math.atan(Math.hypot(dx,dz)/(sample*2));
+   const color=terrainVertexColor(h,slope,wx,wz);
+   positions.push(lx,h,lz);
+   colors.push(color.r,color.g,color.b);
+  }
+ }
+ for(let iz=0;iz<CHUNK_SEGMENTS;iz++){
+  for(let ix=0;ix<CHUNK_SEGMENTS;ix++){
+   const a=iz*(CHUNK_SEGMENTS+1)+ix;
+   const b=a+1,c=a+CHUNK_SEGMENTS+1,d=c+1;
+   indices.push(a,c,b,b,c,d);
+  }
+ }
+ const geometry=new THREE.BufferGeometry();
+ geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+ geometry.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));
+ geometry.setIndex(indices);
+ geometry.computeVertexNormals();
+ geometry.computeBoundingSphere();
+ const group=new THREE.Group();
+ const mesh=new THREE.Mesh(geometry,terrainMaterial);
+ mesh.position.set(cx*CHUNK_SIZE,0,cz*CHUNK_SIZE);
+ mesh.receiveShadow=true;
+ mesh.frustumCulled=true;
+ group.add(mesh);
+ group.add(createVegetation(cx,cz));
+ const minGX=Math.floor((cx*CHUNK_SIZE)/LAKE_GRID)-1;
+ const maxGX=Math.floor(((cx+1)*CHUNK_SIZE)/LAKE_GRID)+1;
+ const minGZ=Math.floor((cz*CHUNK_SIZE)/LAKE_GRID)-1;
+ const maxGZ=Math.floor(((cz+1)*CHUNK_SIZE)/LAKE_GRID)+1;
+ for(let gz=minGZ;gz<=maxGZ;gz++)for(let gx=minGX;gx<=maxGX;gx++){
+  const lake=getLakeDescriptor(gx,gz);
+  if(!lake)continue;
+  if(Math.floor(lake.centerX/CHUNK_SIZE)===cx&&Math.floor(lake.centerZ/CHUNK_SIZE)===cz){
+   group.add(createLakeSurface(lake));
+  }
+ }
+ scene.add(group);
+ return group;
+}
+/* ============================================================
+   AIRCRAFT MODEL AND HANGAR
+   ============================================================ */
+const plane=new THREE.Group();
+scene.add(plane);
+plane.position.set(0,GROUND_CLEARANCE+.7,850);
+const terrainBuildQueue=[];
+const queuedTerrainKeys=new Set();
+function updateTerrainChunks(){
+ const centerX=Math.floor(plane.position.x/CHUNK_SIZE);
+ const centerZ=Math.floor(plane.position.z/CHUNK_SIZE);
+ const needed=new Set();
+ const candidates=[];
+ for(let dz=-CHUNK_RADIUS;dz<=CHUNK_RADIUS;dz++){
+  for(let dx=-CHUNK_RADIUS;dx<=CHUNK_RADIUS;dx++){
+   const cx=centerX+dx,cz=centerZ+dz;
+   // Avoid template-string interpolation here: this key is also used by the queue.
+   const key = String(cx) + ',' + String(cz);
+   needed.add(key);
+   if(!terrainChunks.has(key)&&!queuedTerrainKeys.has(key)){
+    candidates.push({cx,cz,key,distance:dx*dx+dz*dz});
+   }
+  }
+   } 
+ candidates.sort((a,b)=>a.distance-b.distance);
+ for(const item of candidates){
+  terrainBuildQueue.push(item);
+  queuedTerrainKeys.add(item.key);
+ }
+ for(const [key,group] of terrainChunks){
+  if(!needed.has(key)){
+   scene.remove(group);
+   group.traverse(child=>{
+    if(child.geometry)child.geometry.dispose();
+   });
+   terrainChunks.delete(key);
+  }
+ }
+ for(let i=terrainBuildQueue.length-1;i>=0;i--){
+  if(!needed.has(terrainBuildQueue[i].key)){
+   queuedTerrainKeys.delete(terrainBuildQueue[i].key);
+   terrainBuildQueue.splice(i,1);
+  }
+ }
+}
+function buildTerrainChunks(maxChunks = 2) {
+ // Keep streaming active in both the hangar preview and the flight scene.
+ for (let built = 0; built < maxChunks && terrainBuildQueue.length > 0; built++) {
+  const item = terrainBuildQueue.shift();
+  queuedTerrainKeys.delete(item.key);
+  if (terrainChunks.has(item.key)) continue;
+  terrainChunks.set(item.key, createTerrainChunk(item.cx, item.cz));
+ }
+}
+// Build the chunk directly beneath the initial aircraft before streaming the rest.
+const initialChunkX = Math.floor(plane.position.x / CHUNK_SIZE);
+const initialChunkZ = Math.floor(plane.position.z / CHUNK_SIZE);
+const initialChunkKey = String(initialChunkX) + ',' + String(initialChunkZ);
+terrainChunks.set(initialChunkKey, createTerrainChunk(initialChunkX, initialChunkZ));
+updateTerrainChunks();
+box(scene,30,.15,2400,runwayMat,0,0,0);
+for(let z=-1150;z<1200;z+=60)box(scene,.6,.04,28,whiteMat,0,.1,z);
+for(const x of [-14,14])box(scene,.5,.05,2400,whiteMat,x,.1,0);
+for(let i=0;i<100;i++){
+ const x=(Math.random()<.5?-1:1)*(100+Math.random()*1500);
+ const z=(Math.random()-.5)*6000;
+ const h=10+Math.random()*90;
+ const colors=[0x9caaaf,0x7b898c,0xc3bba6];
+ box(scene,30+Math.random()*80,h,30+Math.random()*100,
+  mat(colors[i%3]),x,getTerrainHeight(x,z)+h/2,z);
+}
+const aircraftContactPoints=[
+ [0,-.38,-4.7],[0,-.43,-3],[0,-.43,0],[0,-.38,4.5],
+ [-5.5,-.12,-.5],[5.5,-.12,-.5],[-2,-.12,-.5],[2,-.12,-.5],
+ [-1.8,-1.2,-.4],[1.8,-1.2,-.4],[0,-.68,3.5],
+ [-1.9,-.35,2.7],[1.9,-.35,2.7]
+].map(p=>new THREE.Vector3(...p));
+const contactWorld=new THREE.Vector3();
+const fuselage=new THREE.MeshPhysicalMaterial({color:0xe8edf0,metalness:.97,roughness:.055,clearcoat:1,clearcoatRoughness:.025,envMapIntensity:2.0});
+const wingMat=new THREE.MeshPhysicalMaterial({color:0xd9e6eb,metalness:.96,roughness:.065,clearcoat:1,clearcoatRoughness:.03,envMapIntensity:2.0,side:THREE.DoubleSide});
+const glass=new THREE.MeshPhysicalMaterial({color:0x244e68,metalness:0,roughness:.075,transparent:true,opacity:.42,transmission:.48,ior:1.46,thickness:.18,clearcoat:1,clearcoatRoughness:.035,depthWrite:false,side:THREE.DoubleSide});
+const detailMat=new THREE.MeshPhysicalMaterial({color:0x687d8a,metalness:.98,roughness:.055,clearcoat:1,clearcoatRoughness:.025,envMapIntensity:2.1});
+
+// Smooth, tapered fuselage with a long Mustang-like nose (forward is -Z).
+const fuselageProfile=[
+ new THREE.Vector2(.035,-4.95),new THREE.Vector2(.30,-4.72),
+ new THREE.Vector2(.48,-4.20),new THREE.Vector2(.53,-3.35),
+ new THREE.Vector2(.49,-2.25),new THREE.Vector2(.45,-.80),
+ new THREE.Vector2(.39,1.25),new THREE.Vector2(.31,3.15),
+ new THREE.Vector2(.22,4.20),new THREE.Vector2(.045,4.82)
+];
+const fuselageGeometry=new THREE.LatheGeometry(fuselageProfile,20);
+fuselageGeometry.rotateX(Math.PI/2);
+const fuselageMesh=new THREE.Mesh(fuselageGeometry,fuselage);
+fuselageMesh.scale.z=1.18;
+fuselageMesh.castShadow=true;fuselageMesh.receiveShadow=true;plane.add(fuselageMesh);
+
+// Elliptical, tapered wing planform, built as one smooth outline.
+// A tapered, cambered wing loft. Each span station has its own chord and
+// thickness, with a rounded NACA-style section instead of a thick flat slab.
+const wingStations=[
+ {x:0,lead:-2.20,chord:3.38},
+ {x:1.0,lead:-2.18,chord:3.34},
+ {x:2.0,lead:-2.08,chord:3.20},
+ {x:3.0,lead:-1.91,chord:2.96},
+ {x:4.0,lead:-1.64,chord:2.62},
+ {x:5.0,lead:-1.25,chord:2.12},
+ {x:5.85,lead:-.88,chord:1.62}
+];
+const wingPositions=[],wingIndices=[];
+const chordSteps=32;
+function wingSection(xNorm,chord){
+ const t=.10;
+ const m=.018,p=.40;
+ const xx=THREE.MathUtils.clamp(xNorm,.0001,.9999);
+ const yt=5*t*(.2969*Math.sqrt(xx)-.1260*xx-.3516*xx*xx+.2843*xx**3-.1015*xx**4)*chord;
+ let yc=0;
+ if(xx<p)yc=m/(p*p)*(2*p*xx-xx*xx)*chord;
+ else yc=m/((1-p)*(1-p))*((1-2*p)+2*p*xx-xx*xx)*chord;
+ return {upper:yc+yt,lower:yc-yt};
+}
+function addWingSurface(sign,upper){
+ const base=wingPositions.length/3;
+ for(let i=0;i<wingStations.length;i++){
+  const st=wingStations[i];
+  for(let j=0;j<=chordSteps;j++){
+   const u=j/chordSteps,section=wingSection(u,st.chord);
+   const y=upper?section.upper:section.lower;
+   wingPositions.push(sign*st.x,y,st.lead+u*st.chord);
+  }
+ }
+ for(let i=0;i<wingStations.length-1;i++){
+  for(let j=0;j<chordSteps;j++){
+   const a=base+i*(chordSteps+1)+j,b=a+chordSteps+1;
+   if(upper)wingIndices.push(a,b,a+1,a+1,b,b+1);
+   else wingIndices.push(a,a+1,b,a+1,b+1,b);
+  }
+ }
+}
+addWingSurface(1,true);addWingSurface(1,false);
+addWingSurface(-1,true);addWingSurface(-1,false);
+// Close the root, tip, leading and trailing edges on both half-wings.
+function addWingEdge(sign,stationIndex,chordIndexA,chordIndexB){
+ const st=wingStations[stationIndex],base=wingPositions.length/3;
+ for(const uIndex of [chordIndexA,chordIndexB]){
+  const u=uIndex/chordSteps,sec=wingSection(u,st.chord);
+  wingPositions.push(sign*st.x,sec.upper,st.lead+u*st.chord);
+  wingPositions.push(sign*st.x,sec.lower,st.lead+u*st.chord);
+ }
+ wingIndices.push(base,base+1,base+2,base+1,base+3,base+2);
+}
+for(const sign of [-1,1]){
+ addWingEdge(sign,0,0,chordSteps);
+ addWingEdge(sign,wingStations.length-1,0,chordSteps);
+ // The leading and trailing edges are sealed by narrow strips between stations.
+ for(const edgeU of [0,chordSteps]){
+  const base=wingPositions.length/3;
+  for(const st of wingStations){
+   const sec=wingSection(edgeU/chordSteps,st.chord),z=st.lead+(edgeU/chordSteps)*st.chord;
+   wingPositions.push(sign*st.x,sec.upper,z,sign*st.x,sec.lower,z);
+  }
+  for(let i=0;i<wingStations.length-1;i++){
+   const a=base+i*2,b=a+2;
+   wingIndices.push(a,b,a+1,a+1,b,b+1);
+  }
+ }
+}
+const wingGeometry=new THREE.BufferGeometry();
+wingGeometry.setAttribute('position',new THREE.Float32BufferAttribute(wingPositions,3));
+wingGeometry.setIndex(wingIndices);
+wingGeometry.computeVertexNormals();
+const wingMesh=new THREE.Mesh(wingGeometry,wingMat);
+wingMesh.position.set(0,.02,-.35);wingMesh.castShadow=true;wingMesh.receiveShadow=true;plane.add(wingMesh);
+
+// P-51-inspired horizontal stabilizer and a broad-root vertical fin.
+// The fin's lower edge overlaps the horizontal stabilizer across a wide base.
+const tailShape=new THREE.Shape();
+tailShape.moveTo(0,-.58);
+tailShape.quadraticCurveTo(1.18,-.52,1.72,-.16);
+tailShape.quadraticCurveTo(1.82,.12,1.55,.38);
+tailShape.quadraticCurveTo(.72,.48,0,.43);
+tailShape.quadraticCurveTo(-.72,.48,-1.55,.38);
+tailShape.quadraticCurveTo(-1.82,.12,-1.72,-.16);
+tailShape.quadraticCurveTo(-1.18,-.52,0,-.58);
+const tailGeometry=new THREE.ExtrudeGeometry(tailShape,{depth:.075,bevelEnabled:true,bevelSegments:3,steps:1,bevelSize:.018,bevelThickness:.015,curveSegments:20});
+tailGeometry.translate(0,0,-.06);
+tailGeometry.rotateX(Math.PI/2);
+const tailMesh=new THREE.Mesh(tailGeometry,wingMat);
+tailMesh.position.set(0,.13,3.82);
+tailMesh.castShadow=true;tailMesh.receiveShadow=true;plane.add(tailMesh);
+
+// Local X becomes aircraft Z after rotation; the broad lower edge therefore
+// sits directly on the horizontal tail instead of meeting it at a narrow point.
+const finShape=new THREE.Shape();
+// Narrower, cleaner P-51-like fin: broad enough at the root to blend into
+// the tailplane, with a smooth swept leading edge and a compact rounded tip.
+finShape.moveTo(.92,-.12);
+finShape.quadraticCurveTo(.78,.12,.43,.53);
+finShape.lineTo(.055,1.30);
+finShape.quadraticCurveTo(-.075,1.73,-.245,1.91);
+finShape.quadraticCurveTo(-.34,1.98,-.405,1.89);
+finShape.quadraticCurveTo(-.43,1.80,-.39,1.64);
+finShape.lineTo(-.34,.77);
+finShape.quadraticCurveTo(-.27,.43,-.62,.12);
+finShape.quadraticCurveTo(-.78,-.08,-.92,-.12);
+finShape.lineTo(.92,-.12);
+const finGeometry=new THREE.ExtrudeGeometry(finShape,{
+ depth:.085,bevelEnabled:true,bevelSegments:3,steps:1,
+ bevelSize:.018,bevelThickness:.014,curveSegments:24
+});
+finGeometry.translate(0,0,-.11);
+finGeometry.rotateY(Math.PI/2);
+const finMesh=new THREE.Mesh(finGeometry,wingMat);
+finMesh.position.set(0,.13,3.82);
+finMesh.castShadow=true;finMesh.receiveShadow=true;plane.add(finMesh);
+
+
+// Transparent bubble canopy: the glazing is see-through while its metal
+// hoops and longitudinal rails remain opaque and clearly visible.
+glass.transparent=true;
+glass.opacity=.20;
+glass.depthWrite=false;
+glass.side=THREE.DoubleSide;
+const canopy=new THREE.Mesh(
+ new THREE.SphereGeometry(1,40,24,0,Math.PI*2,0,Math.PI/2),glass
+);
+canopy.scale.set(.43,.43,1.20);
+canopy.position.set(0,.48,-1.72);
+canopy.castShadow=false;canopy.renderOrder=2;plane.add(canopy);
+const canopyFrameMaterial=new THREE.MeshPhysicalMaterial({color:0x9baab4,metalness:.96,roughness:.12,clearcoat:1,clearcoatRoughness:.05,envMapIntensity:1.5});
+function addCanopyHoop(z){
+ const pts=[];
+ for(let i=0;i<=32;i++){
+  const a=i/32*Math.PI;
+  pts.push(new THREE.Vector3(.435*Math.cos(a),.48+.435*Math.sin(a),z));
+ }
+ const curve=new THREE.CatmullRomCurve3(pts);
+ const hoop=new THREE.Mesh(new THREE.TubeGeometry(curve,48,.016,8,false),canopyFrameMaterial);
+ hoop.castShadow=true;plane.add(hoop);
+}
+addCanopyHoop(-2.48);
+addCanopyHoop(-.98);
+for(const side of [-1,1]){
+ const railCurve=new THREE.CatmullRomCurve3([
+  new THREE.Vector3(side*.39,.49,-2.62),
+  new THREE.Vector3(side*.425,.70,-2.15),
+  new THREE.Vector3(side*.425,.78,-1.55),
+  new THREE.Vector3(side*.39,.67,-1.10),
+  new THREE.Vector3(side*.34,.48,-.82)
+ ]);
+ const rail=new THREE.Mesh(new THREE.TubeGeometry(railCurve,36,.016,8,false),canopyFrameMaterial);
+ rail.castShadow=true;plane.add(rail);
+}
+// Twelve compact metallic exhaust stubs: six on each side of the cowling.
+const exhaustMaterial=new THREE.MeshPhysicalMaterial({color:0x8c969d,metalness:1,roughness:.12,clearcoat:1,clearcoatRoughness:.05,envMapIntensity:1.6});
+for(const side of [-1,1]){
+ for(let i=0;i<6;i++){
+  const z=-4.12+i*.31;
+  const stack=new THREE.Mesh(new THREE.CylinderGeometry(.052,.060,.19,10),exhaustMaterial);
+  stack.rotation.z=Math.PI/2;
+  stack.rotation.y=side*-.08;
+  stack.position.set(side*.475,.095,z);
+  stack.castShadow=true;stack.receiveShadow=true;plane.add(stack);
+  const outlet=new THREE.Mesh(new THREE.CircleGeometry(.043,12),darkMat);
+  outlet.rotation.y=side>0?Math.PI/2:-Math.PI/2;
+  outlet.position.set(side*.574,.095,z);
+  plane.add(outlet);
+ }
+}
+// Streamlined radiator scoop with a clearly connected intake mouth.
+// Forward is -Z: the fairing's front profile, dark opening, and metal lip share one center.
+const radiatorProfile=[
+ // Outer lip to the rear of the fairing, then back along the inner duct.
+ new THREE.Vector2(.335,-1.02),new THREE.Vector2(.365,-.78),
+ new THREE.Vector2(.345,-.43),new THREE.Vector2(.292,-.06),
+ new THREE.Vector2(.225,.32),new THREE.Vector2(.145,.63),
+ new THREE.Vector2(.055,.88),new THREE.Vector2(.025,.96),
+ new THREE.Vector2(.075,.72),new THREE.Vector2(.145,.40),
+ new THREE.Vector2(.205,.04),new THREE.Vector2(.248,-.36),
+ new THREE.Vector2(.268,-.72),new THREE.Vector2(.268,-1.02)
+];
+const radiatorGeometry=new THREE.LatheGeometry(radiatorProfile,40);
+radiatorGeometry.rotateX(Math.PI/2);
+const radiator=new THREE.Mesh(radiatorGeometry,detailMat);
+radiator.scale.set(1,.68,1);
+radiator.position.set(0,-.57,1.48);
+radiator.castShadow=true;radiator.receiveShadow=true;plane.add(radiator);
+const radiatorMouthMaterial=new THREE.MeshPhysicalMaterial({color:0x070d12,metalness:.35,roughness:.24,side:THREE.DoubleSide});
+const radiatorMouth=new THREE.Mesh(new THREE.CircleGeometry(.245,48),radiatorMouthMaterial);
+radiatorMouth.scale.set(1,.68,1);
+radiatorMouth.rotation.y=Math.PI;
+// The dark backing is set inside the open rim, not across its front edge.
+radiatorMouth.position.set(0,-.57,.68);
+radiatorMouth.castShadow=false;radiatorMouth.receiveShadow=false;plane.add(radiatorMouth);
+const radiatorLip=new THREE.Mesh(
+ new THREE.TorusGeometry(.30,.028,12,56),
+ new THREE.MeshPhysicalMaterial({color:0xb9c5cc,metalness:1,roughness:.08,clearcoat:1,clearcoatRoughness:.04,envMapIntensity:1.6})
+);
+radiatorLip.scale.set(1,.68,1);
+radiatorLip.rotation.y=Math.PI;
+radiatorLip.position.set(0,-.57,.46);
+radiatorLip.castShadow=true;plane.add(radiatorLip);
+// Inner dark throat just behind the intake gives the mouth depth instead of a flat sticker.
+const radiatorThroat=new THREE.Mesh(new THREE.CylinderGeometry(.205,.155,.34,40),radiatorMouthMaterial);
+radiatorThroat.rotation.x=Math.PI/2;
+radiatorThroat.position.set(0,-.57,.88);
+radiatorThroat.castShadow=false;plane.add(radiatorThroat);
+
+const wheels=[];
+for(const x of [-1.8,1.8]){
+ const leg=cylinder(plane,.06,.06,.85,darkMat,x,-.55,-.4);
+ leg.rotation.x=.15;
+ wheels.push(cylinder(plane,.24,.24,.16,tireMat,x,-.96,-.4,Math.PI/2));
+}
+wheels.push(cylinder(plane,.13,.13,.12,tireMat,0,-.55,3.5,Math.PI/2));
+// The propeller has its own pivot at the nose. Its local Z axis is the
+// aircraft's forward axis, so it spins in the same plane in flight and in the hangar.
+const prop=new THREE.Group();
+prop.position.set(0,0,-5.55);
+plane.add(prop);
+for(let bladeIndex=0;bladeIndex<4;bladeIndex++){
+ const blade=new THREE.Mesh(new THREE.BoxGeometry(.14,1.95,.12),darkMat);
+ blade.rotation.z=bladeIndex*Math.PI/2+.24;
+ blade.castShadow=true;blade.receiveShadow=true;prop.add(blade);
+}
+const propHub=new THREE.Mesh(new THREE.SphereGeometry(.23,16,12),detailMat);
+propHub.scale.set(.9,.9,.7);prop.add(propHub);
+let propAngularSpeed=0;
+let propDamaged=false;
+const hangarGroup=new THREE.Group();
+scene.add(hangarGroup);
+const hangarWall=mat(0x344452,.82),hangarTrim=mat(0x718391,.65),hangarFloor=mat(0x4b5962,.9),hangarGlass=new THREE.MeshStandardMaterial({color:0x152b3c,metalness:.25,roughness:.3});
+const hangarZ=850,hangarY=getGroundHeight(0,hangarZ)+.12;
+box(hangarGroup,76,.35,76,hangarFloor,0,hangarY,hangarZ);
+box(hangarGroup,1,17,76,hangarWall,-38,hangarY+8.5,hangarZ);
+box(hangarGroup,1,17,76,hangarWall,38,hangarY+8.5,hangarZ);
+box(hangarGroup,76,17,1,hangarWall,0,hangarY+8.5,hangarZ+38);
+box(hangarGroup,76,1,1.2,hangarTrim,0,hangarY+17,hangarZ);
+box(hangarGroup,1.2,17,1.2,hangarTrim,-37.4,hangarY+8.5,hangarZ-37);
+box(hangarGroup,1.2,17,1.2,hangarTrim,37.4,hangarY+8.5,hangarZ-37);
+for(let x=-30;x<=30;x+=15)box(hangarGroup,.45,.5,76,hangarTrim,x,hangarY+16.3,hangarZ);
+for(let z=-28;z<=28;z+=14)box(hangarGroup,76,.35,.45,hangarTrim,0,hangarY+16.1,hangarZ+z);
+for(const side of [-1,1])for(let z=-25;z<=25;z+=13){
+ const pane=new THREE.Mesh(new THREE.BoxGeometry(.08,5,9),hangarGlass);pane.position.set(side*37.42,hangarY+12,hangarZ+z);hangarGroup.add(pane);
+}
+const hangarLampMat=new THREE.MeshBasicMaterial({color:0xffe5b2});
+for(const x of [-22,-7,7,22]){
+ const lamp=box(hangarGroup,5,.12,.8,hangarLampMat,x,hangarY+15.4,hangarZ-4);
+ const glow=new THREE.PointLight(0xffd9a0,28,34,2);glow.position.set(x,hangarY+14.8,hangarZ-4);hangarGroup.add(glow);
+}
+const hangarDoorLine=mat(0x91a5b2,.6);
+box(hangarGroup,76,.12,.5,hangarDoorLine,0,hangarY+.3,hangarZ-37.5);
+// Workshop props are deliberately arranged around the edges, leaving the aircraft clear.
+const toolSteel=mat(0x9aa8ae,.38),toolHandle=mat(0x263b4c,.55),toolRed=mat(0xb54b3b,.62),toolYellow=mat(0xd1a642,.6);
+function makeWorkshopTool(kind,x,z,rotation){
+ const tool=new THREE.Group();
+ tool.position.set(x,hangarY+.28,z);tool.rotation.y=rotation;
+ if(kind===0){
+  box(tool,1.9,.55,1.15,toolRed,0,.3,0);
+  box(tool,1.45,.12,.82,toolSteel,0,.64,0);
+  box(tool,.75,.12,.18,toolHandle,0,.74,-.42);
+ }else if(kind===1){
+  cylinder(tool,.075,.075,1.65,toolHandle,0,.1,0,Math.PI/2);
+  box(tool,.72,.2,.28,toolSteel,.72,.1,0);
+  box(tool,.2,.48,.28,toolSteel,1.02,.1,0);
+ }else if(kind===2){
+  cylinder(tool,.09,.09,1.8,toolYellow,0,.1,0,Math.PI/2);
+  cylinder(tool,.035,.035,.72,toolSteel,.92,.1,0,Math.PI/2);
+ }else{
+  box(tool,1.25,.13,.22,toolSteel,0,.1,0);
+  box(tool,.22,.4,.22,toolSteel,-.5,.12,0);
+  box(tool,.22,.4,.22,toolSteel,.5,.12,0);
+  cylinder(tool,.12,.12,.5,toolHandle,0,.1,.22,Math.PI/2);
+ }
+ tool.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});
+ hangarGroup.add(tool);
+}
+const workshopToolSpots=[
+ [-29,-26],[-22,-30],[-11,-31],[8,-30],[25,-27],[30,-12],
+ [30,10],[25,29],[9,31],[-12,30],[-29,25],[-31,7]
+];
+workshopToolSpots.forEach((spot,i)=>makeWorkshopTool(i%4,spot[0],spot[1],(hash2(i+41,9)-.5)*Math.PI));
+plane.position.set(0,hangarY+2.0,hangarZ+5);
+plane.rotation.set(0,0,0);
+let selectedAircraftColor='#e8edf0';
+const flapMaterial=mat(0x9bb7c5,.48);
+const aircraftPaintMaterials=[fuselage,wingMat,flapMaterial];
+const paintState={top:'#e8edf0',bottom:'#3b4c58',boundary:0,mode:'two-tone',camo:['#4b6042','#6b7047','#69513c','#b4a47b']};
+const paintShaderUniforms=[];
+function installPaintShader(material){
+ material.onBeforeCompile=(shader)=>{
+  const uniforms={
+   uTopColor:{value:new THREE.Color(paintState.top)},
+   uBottomColor:{value:new THREE.Color(paintState.bottom)},
+   uBoundary:{value:paintState.boundary},
+   uCamoMode:{value:0},
+   uCamo1:{value:new THREE.Color(paintState.camo[0])},
+   uCamo2:{value:new THREE.Color(paintState.camo[1])},
+   uCamo3:{value:new THREE.Color(paintState.camo[2])},
+   uCamo4:{value:new THREE.Color(paintState.camo[3])}
+  };
+  Object.assign(shader.uniforms,uniforms);
+  paintShaderUniforms.push(uniforms);
+  shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vPaintPosition;');
+  shader.vertexShader=shader.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\nvPaintPosition = position;');
+  shader.fragmentShader=shader.fragmentShader.replace('#include <common>',`#include <common>
+varying vec3 vPaintPosition;
+uniform vec3 uTopColor; uniform vec3 uBottomColor; uniform float uBoundary;
+uniform float uCamoMode; uniform vec3 uCamo1; uniform vec3 uCamo2; uniform vec3 uCamo3; uniform vec3 uCamo4;
+float paintHash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+float paintNoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);return mix(mix(paintHash(i),paintHash(i+vec2(1.0,0.0)),f.x),mix(paintHash(i+vec2(0.0,1.0)),paintHash(i+vec2(1.0,1.0)),f.x),f.y);}`);
+  shader.fragmentShader=shader.fragmentShader.replace('#include <color_fragment>',`#include <color_fragment>
+vec3 twoTone=mix(uBottomColor,uTopColor,smoothstep(uBoundary-0.018,uBoundary+0.018,vPaintPosition.y));
+vec2 camoUV=vPaintPosition.xz*0.72 + vec2(sin(vPaintPosition.y*1.7),cos(vPaintPosition.y*1.3))*0.28;
+float camoNoise=paintNoise(camoUV)+0.22*paintNoise(camoUV*2.1+17.0);
+vec3 camoColor=camoNoise<0.31?uCamo1:(camoNoise<0.53?uCamo2:(camoNoise<0.75?uCamo3:uCamo4));
+diffuseColor.rgb = mix(twoTone,camoColor,uCamoMode);`);
+ };
+ material.customProgramCacheKey=()=> 'aircraft-paint-v4-small-camo';
+ material.needsUpdate=true;
+}
+for(const material of aircraftPaintMaterials)installPaintShader(material);
+const grainCanvas=document.createElement('canvas');
+grainCanvas.width=128;grainCanvas.height=128;
+const grainContext=grainCanvas.getContext('2d');
+const grainImage=grainContext.createImageData(128,128);
+for(let i=0;i<grainImage.data.length;i+=4){const grain=150+Math.floor(Math.random()*106);grainImage.data[i]=grain;grainImage.data[i+1]=grain;grainImage.data[i+2]=grain;grainImage.data[i+3]=255;}
+grainContext.putImageData(grainImage,0,0);
+const aircraftGrainTexture=new THREE.CanvasTexture(grainCanvas);
+aircraftGrainTexture.wrapS=aircraftGrainTexture.wrapT=THREE.RepeatWrapping;
+aircraftGrainTexture.repeat.set(5,5);
+aircraftGrainTexture.colorSpace=THREE.NoColorSpace;
+function setAircraftSurfaceFinish(finish){
+ const presets={
+  standard:{roughness:.12,metalness:.88,grain:false},
+  polished:{roughness:.035,metalness:1,grain:false},
+  matte:{roughness:.72,metalness:.28,grain:false},
+  weathered:{roughness:.43,metalness:.72,grain:true}
+ };
+ const preset=presets[finish]||presets.standard;
+ for(const material of aircraftPaintMaterials){
+  material.roughness=preset.roughness;material.metalness=preset.metalness;
+  if(material.isMeshPhysicalMaterial){material.clearcoat=1;material.clearcoatRoughness=finish==='polished'?.018:.06;material.envMapIntensity=2.1;}
+  material.roughnessMap=preset.grain?aircraftGrainTexture:null;material.needsUpdate=true;
+ }
+}
+function updatePaintUniforms(){
+ for(const u of paintShaderUniforms){
+  u.uTopColor.value.set(paintState.top);u.uBottomColor.value.set(paintState.bottom);
+  u.uBoundary.value=paintState.boundary;u.uCamoMode.value=paintState.mode==='camo'?1:0;
+  u.uCamo1.value.set(paintState.camo[0]);u.uCamo2.value.set(paintState.camo[1]);
+  u.uCamo3.value.set(paintState.camo[2]);u.uCamo4.value.set(paintState.camo[3]);
+ }
+}
+const colorToggle=document.getElementById('colorToggle');
+const paletteWrap=document.getElementById('colorPaletteWrap');
+const colorGradient=document.getElementById('colorGradient');
+const paletteMagnifier=document.getElementById('paletteMagnifier');
+const paintControls=document.getElementById('paintControls');
+const paintModeSelect=document.getElementById('paintMode');
+const topColorInput=document.getElementById('topColorInput');
+const bottomColorInput=document.getElementById('bottomColorInput');
+const boundaryInput=document.getElementById('paintBoundary');
+const camoInputs=[1,2,3,4].map(i=>document.getElementById('camoColor'+i));
+let activePaintSlot='top';
+function setPaintColorForActiveSlot(hex){
+ const clean=String(hex).toLowerCase();selectedAircraftColor=clean;
+ if(activePaintSlot==='top'){paintState.top=clean;topColorInput.value=clean;}
+ else if(activePaintSlot==='bottom'){paintState.bottom=clean;bottomColorInput.value=clean;}
+ else {const index=Number(activePaintSlot.slice(4))-1;paintState.camo[index]=clean;camoInputs[index].value=clean;}
+ updatePaintUniforms();
+ const label=document.getElementById('selectedColorLabel');const chip=document.getElementById('selectedColorChip');
+ const slotLabel=activePaintSlot==='top'?'TOP COLOR':activePaintSlot==='bottom'?'BOTTOM COLOR':'CAMO '+activePaintSlot.slice(4);
+ if(label)label.textContent=slotLabel+': '+clean.toUpperCase();if(chip)chip.style.backgroundColor=clean;
+}
+function choosePaintSlot(slot){
+ activePaintSlot=slot;
+ const value=slot==='top'?paintState.top:slot==='bottom'?paintState.bottom:paintState.camo[Number(slot.slice(4))-1];
+ selectedAircraftColor=value;
+ const label=document.getElementById('selectedColorLabel');const chip=document.getElementById('selectedColorChip');
+ const slotLabel=slot==='top'?'TOP COLOR':slot==='bottom'?'BOTTOM COLOR':'CAMO '+slot.slice(4);
+ label.textContent=slotLabel+': '+value.toUpperCase();chip.style.backgroundColor=value;
+}
+function updateColorFromPoint(clientX,clientY){
+ const rect=colorGradient.getBoundingClientRect();
+ const x=clamp((clientX-rect.left)/rect.width,0,1),y=clamp((clientY-rect.top)/rect.height,0,1);
+ const color=new THREE.Color().setHSL(x,.88,1-y,'srgb');
+ const hex='#'+color.getHexString();setPaintColorForActiveSlot(hex);
+ colorGradient.setAttribute('aria-valuenow',String(Math.round(x*100)));
+ paletteMagnifier.style.display='block';paletteMagnifier.style.left=(x*100)+'%';paletteMagnifier.style.top=(y*100)+'%';paletteMagnifier.style.backgroundColor=hex;
+ colorGradient.dataset.x=String(x);colorGradient.dataset.y=String(y);
+}
+let colorPointerActive=false;
+colorGradient.addEventListener('pointerdown',e=>{e.preventDefault();colorPointerActive=true;try{colorGradient.setPointerCapture(e.pointerId)}catch(_){}updateColorFromPoint(e.clientX,e.clientY);});
+colorGradient.addEventListener('pointermove',e=>{if(colorPointerActive)updateColorFromPoint(e.clientX,e.clientY);});
+function endColorPointer(){colorPointerActive=false;}
+colorGradient.addEventListener('pointerup',endColorPointer);colorGradient.addEventListener('pointercancel',endColorPointer);colorGradient.addEventListener('lostpointercapture',endColorPointer);
+colorGradient.addEventListener('keydown',e=>{
+ if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;e.preventDefault();
+ const rect=colorGradient.getBoundingClientRect(),x=Number(colorGradient.dataset.x||.55),y=Number(colorGradient.dataset.y||.45);
+ const nx=clamp(x+(e.key==='ArrowRight'?.015:e.key==='ArrowLeft'?-.015:0),0,1);
+ const ny=clamp(y+(e.key==='ArrowDown'?.015:e.key==='ArrowUp'?-.015:0),0,1);
+ updateColorFromPoint(rect.left+nx*rect.width,rect.top+ny*rect.height);
+});
+colorToggle.addEventListener('click',()=>{const open=paletteWrap.classList.toggle('open');colorToggle.setAttribute('aria-expanded',String(open));colorToggle.textContent=open?'AIRCRAFT PAINT　－':'AIRCRAFT PAINT　＋';});
+paintModeSelect.addEventListener('change',()=>{paintState.mode=paintModeSelect.value;paintControls.classList.toggle('camo',paintState.mode==='camo');updatePaintUniforms();});
+topColorInput.addEventListener('focus',()=>choosePaintSlot('top'));topColorInput.addEventListener('pointerdown',()=>choosePaintSlot('top'));topColorInput.addEventListener('input',()=>{choosePaintSlot('top');setPaintColorForActiveSlot(topColorInput.value);});
+bottomColorInput.addEventListener('focus',()=>choosePaintSlot('bottom'));bottomColorInput.addEventListener('pointerdown',()=>choosePaintSlot('bottom'));bottomColorInput.addEventListener('input',()=>{choosePaintSlot('bottom');setPaintColorForActiveSlot(bottomColorInput.value);});
+boundaryInput.addEventListener('input',()=>{paintState.boundary=Number(boundaryInput.value);updatePaintUniforms();});
+camoInputs.forEach((input,i)=>{const slot='camo'+(i+1);input.addEventListener('focus',()=>choosePaintSlot(slot));input.addEventListener('pointerdown',()=>choosePaintSlot(slot));input.addEventListener('input',()=>{choosePaintSlot(slot);setPaintColorForActiveSlot(input.value);});});
+setPaintColorForActiveSlot(paintState.top);updatePaintUniforms();
+const surfaceFinishSelect=document.getElementById('surfaceFinish');
+surfaceFinishSelect.addEventListener('change',()=>setAircraftSurfaceFinish(surfaceFinishSelect.value));
+setAircraftSurfaceFinish(surfaceFinishSelect.value);
+function showHomeScreen(){
+ document.body.classList.add('menu-active');
+ document.getElementById('startScreen').classList.remove('hidden');
+ hangarGroup.visible=true;
+ reset();
+ plane.position.set(0,hangarY+2.0,hangarZ+5);
+ plane.rotation.set(0,0,0);
+ cameraYaw=cameraYawCurrent=.52;cameraPitch=cameraPitchCurrent=.20;cameraDistance=cameraDistanceCurrent=25;
+ updateHangarPreviewCamera(1/60);
+}
+document.getElementById('startFlightButton').addEventListener('click',()=>{
+ document.getElementById('startScreen').classList.add('hidden');
+ document.body.classList.remove('menu-active');
+ hangarGroup.visible=false;
+ reset();
+ cameraYaw=cameraYawCurrent=0;cameraPitch=cameraPitchCurrent=.16;cameraDistance=cameraDistanceCurrent=18;
+ updateChaseCamera(true);
+});
+document.getElementById('goHomeButton').addEventListener('click',showHomeScreen);
+/* ============================================================
+   FICTIONAL EPLS VISUAL EFFECTS — NON-DESTRUCTIVE GAMEPLAY
+   ============================================================ */
+const EPLS_PULSE_RATE=500/60;
+const EPLS_PULSE_INTERVAL=1/EPLS_PULSE_RATE;
+// Fixed arcade-game speed: 2,000 km/h converted to Three.js world units/second.
+const EPLS_PULSE_SPEED=2000/3.6;
+const EPLS_PULSE_MAX_DISTANCE=10000;
+const EPLS_SIM_STEP=1/240;
+const EPLS_PULSE_GRAVITY=9.81;
+const EPLS_PULSE_TERMINAL_DESCENT=10;
+const EPLS_PREDICTION_STEP=1/60;
+const eplsPulses=[];
+const eplsImpactFlashes=[];
+let eplsFireAccumulator=0;
+let eplsWasFiring=false;
+const eplsPulseGeometry=new THREE.CapsuleGeometry(.13,.9,4,8);
+const eplsPulseMaterial=new THREE.MeshBasicMaterial({color:0x168cff,toneMapped:false});
+const eplsGlowGeometry=new THREE.SphereGeometry(.36,12,10);
+const eplsGlowMaterial=new THREE.MeshBasicMaterial({
+ color:0x55c7ff,transparent:true,opacity:.28,depthWrite:false,
+ blending:THREE.AdditiveBlending,toneMapped:false
+});
+const eplsTrailGeometry=new THREE.CylinderGeometry(.055,.12,1.65,8,1,true);
+const eplsTrailMaterial=new THREE.MeshBasicMaterial({
+ color:0x168cff,transparent:true,opacity:.72,depthWrite:false,
+ blending:THREE.AdditiveBlending,toneMapped:false
+});
+const eplsPulseDirection=new THREE.Vector3();
+const eplsPulseOrigin=new THREE.Vector3();
+const eplsPulseVelocity=new THREE.Vector3();
+const eplsImpactRingGeometry=new THREE.TorusGeometry(1,.12,8,48);
+const eplsImpactCoreGeometry=new THREE.SphereGeometry(.85,16,12);
+const eplsImpactBeamGeometry=new THREE.CylinderGeometry(.28,.55,1,12,1,true);
+// Non-destructive arcade marker showing the predicted EPLS field-contact point.
+const eplsPredictionGroup=new THREE.Group();
+const eplsPredictionRingMaterial=new THREE.MeshBasicMaterial({color:0x55ffb0,transparent:true,opacity:.9,depthWrite:false,toneMapped:false,side:THREE.DoubleSide});
+const eplsPredictionRing=new THREE.Mesh(new THREE.TorusGeometry(3.2,.12,8,48),eplsPredictionRingMaterial);
+eplsPredictionRing.rotation.x=Math.PI/2;
+eplsPredictionGroup.add(eplsPredictionRing);
+const eplsPredictionCore=new THREE.Mesh(new THREE.SphereGeometry(.32,12,8),new THREE.MeshBasicMaterial({color:0xbaffdf,toneMapped:false}));
+eplsPredictionCore.position.y=.25;
+eplsPredictionGroup.add(eplsPredictionCore);
+eplsPredictionGroup.visible=false;
+scene.add(eplsPredictionGroup);
+function getEPLSLaunchState(){
+ const launchAngle=THREE.MathUtils.degToRad(currentScopeMode==='air-to-air'?.5:-2.5);
+ const localDirection=new THREE.Vector3(0,Math.sin(launchAngle),-Math.cos(launchAngle));
+ const direction=localDirection.applyQuaternion(plane.quaternion).normalize();
+ const origin=new THREE.Vector3(0,0,-6.05).applyQuaternion(plane.quaternion).add(plane.position);
+ // 2,000 km/h is relative to the aircraft; world velocity is inherited.
+ const pulseVelocity=velocity.clone().addScaledVector(direction,EPLS_PULSE_SPEED);
+ return {origin,direction,pulseVelocity};
+}
+const EPLS_SCOPE_RADIUS=500;
+function predictEPLSScopePoint(){
+ const launch=getEPLSLaunchState();
+ const center=plane.position.clone();
+ const pos=launch.origin.clone();
+ const vel=launch.pulseVelocity.clone();
+ const previous=new THREE.Vector3();
+ const candidate=new THREE.Vector3();
+ const airToAir=currentScopeMode==='air-to-air';
+ const step=EPLS_SIM_STEP;
+ let travelled=0;
+ for(let elapsed=0;elapsed<60;elapsed+=step){
+  previous.copy(pos);
+  vel.y=Math.max(-EPLS_PULSE_TERMINAL_DESCENT,vel.y-EPLS_PULSE_GRAVITY*step);
+  pos.addScaledVector(vel,step);
+  travelled+=vel.length()*step;
+
+  // Find the terrain-crossing fraction for this exact simulation segment.
+  let groundFraction=null;
+  if(pos.y<=getGroundHeight(pos.x,pos.z)+.18){
+   let lo=0,hi=1;
+   for(let n=0;n<24;n++){
+    const mid=(lo+hi)*.5;
+    candidate.lerpVectors(previous,pos,mid);
+    if(candidate.y>getGroundHeight(candidate.x,candidate.z)+.18)lo=mid;else hi=mid;
+   }
+   groundFraction=hi;
+  }
+
+  // In air-to-air mode, solve the segment/sphere crossing independently.
+  let sphereFraction=null;
+  if(airToAir){
+   const r2=EPLS_SCOPE_RADIUS*EPLS_SCOPE_RADIUS;
+   const d0=previous.distanceToSquared(center);
+   const d1=pos.distanceToSquared(center);
+   if(d0<r2&&d1>=r2){
+    let lo=0,hi=1;
+    for(let n=0;n<26;n++){
+     const mid=(lo+hi)*.5;
+          candidate.lerpVectors(previous,pos,mid);
+     if(candidate.distanceToSquared(center)<r2)lo=mid;else hi=mid;
+    }
+    sphereFraction=hi;
+   }
+  }
+
+  // Whichever event happens first wins; ground only overrides the sphere
+  // when the pulse reaches the terrain earlier in the same segment.
+  if(groundFraction!==null&&(sphereFraction===null||groundFraction<=sphereFraction)){
+   candidate.lerpVectors(previous,pos,groundFraction);
+   candidate.y=getGroundHeight(candidate.x,candidate.z);
+   return {point:candidate.clone(),kind:'ground'};
+  }
+  if(sphereFraction!==null){
+   candidate.lerpVectors(previous,pos,sphereFraction);
+   return {point:candidate.clone(),kind:'sphere'};
+  }
+  if(travelled>=EPLS_PULSE_MAX_DISTANCE)break;
+ }
+ if(!airToAir){
+  // Arcade ground-scan fallback: show a terrain sample ahead of the aircraft
+  // so the air-to-ground scope remains available even when no contact point
+  // falls inside the short prediction window.
+  const forward=new THREE.Vector3(0,0,-1).applyQuaternion(plane.quaternion);
+  forward.y=0;
+  if(forward.lengthSq()<1e-6)forward.set(0,0,-1);
+  forward.normalize();
+  const scanPoint=plane.position.clone().addScaledVector(forward,EPLS_PULSE_MAX_DISTANCE);
+  scanPoint.y=getGroundHeight(scanPoint.x,scanPoint.z);
+  return {point:scanPoint,kind:'ground-scan'};
+ }
+ return null;
+}
+
+function updateEPLSPrediction(){
+ const prediction=predictEPLSScopePoint();
+ eplsPredictionGroup.visible=!!prediction;
+ if(prediction){
+  eplsPredictionGroup.position.copy(prediction.point);
+  eplsPredictionGroup.userData.predictionKind=prediction.kind;
+ }
+}
+function spawnEPLSPulse(){
+ const pulse=new THREE.Group();
+ const core=new THREE.Mesh(eplsPulseGeometry,eplsPulseMaterial);
+ const glow=new THREE.Mesh(eplsGlowGeometry,eplsGlowMaterial);
+ const trail=new THREE.Mesh(eplsTrailGeometry,eplsTrailMaterial);
+ // Capsule and trail are aligned with the aircraft's forward (-Z) axis.
+ core.rotation.x=Math.PI/2;
+ trail.rotation.x=Math.PI/2;
+ trail.position.z=.92;
+ pulse.add(core,glow,trail);
+ eplsPulseOrigin.set(0,0,-5.85).applyQuaternion(plane.quaternion).add(plane.position);
+ eplsPulseDirection.set(0,0,-1).applyQuaternion(plane.quaternion).normalize();
+ const launchState=getEPLSLaunchState();
+ eplsPulseOrigin.copy(launchState.origin);
+ eplsPulseVelocity.copy(launchState.pulseVelocity);
+ pulse.position.copy(eplsPulseOrigin);
+ pulse.quaternion.copy(plane.quaternion);
+ scene.add(pulse);
+ eplsPulses.push({mesh:pulse,velocity:eplsPulseVelocity.clone(),distance:0,simAccumulator:0});
+}
+function createEPLSGroundImpact(position){
+ // Bright, expanding blue field ring and vertical glow column; this has no damage effect.
+ const group=new THREE.Group();
+ group.position.copy(position);
+ group.position.y+=.16;
+ const ringMaterial=new THREE.MeshBasicMaterial({
+  color:0x39bfff,transparent:true,opacity:1,depthWrite:false,
+  blending:THREE.AdditiveBlending,toneMapped:false,side:THREE.DoubleSide
+ });
+ const coreMaterial=new THREE.MeshBasicMaterial({
+  color:0x9beaff,transparent:true,opacity:.95,depthWrite:false,
+  blending:THREE.AdditiveBlending,toneMapped:false
+ });
+ const beamMaterial=new THREE.MeshBasicMaterial({
+  color:0x38aaff,transparent:true,opacity:.72,depthWrite:false,
+  blending:THREE.AdditiveBlending,toneMapped:false,side:THREE.DoubleSide
+ });
+ const ring=new THREE.Mesh(eplsImpactRingGeometry,ringMaterial);
+ ring.rotation.x=Math.PI/2;
+ ring.scale.setScalar(.8);
+ const core=new THREE.Mesh(eplsImpactCoreGeometry,coreMaterial);
+ core.position.y=.42;
+ const beam=new THREE.Mesh(eplsImpactBeamGeometry,beamMaterial);
+ beam.position.y=3.5;
+ beam.scale.set(1,7,1);
+ group.add(ring,core,beam);
+ scene.add(group);
+ eplsImpactFlashes.push({
+  mesh:group,ring,core,beam,
+  materials:[ringMaterial,coreMaterial,beamMaterial],
+  life:1.1,maxLife:1.1
+ });
+}
+function updateEPLS(dt){
+ const firing=!!keys.space;
+ const status=document.getElementById('eplsStatus');
+ const fireButton=document.getElementById('eplsFireButton');
+ if(firing){
+  status.textContent='ACTIVE';
+  fireButton.classList.add('firing');
+  if(!eplsWasFiring)eplsFireAccumulator=EPLS_PULSE_INTERVAL;
+  eplsFireAccumulator+=dt;
+  while(eplsFireAccumulator>=EPLS_PULSE_INTERVAL){
+   spawnEPLSPulse();
+   eplsFireAccumulator-=EPLS_PULSE_INTERVAL;
+  }
+ }else{
+  status.textContent='STANDBY';
+  fireButton.classList.remove('firing');
+  eplsFireAccumulator=0;
+ }
+ eplsWasFiring=firing;
+ for(let i=eplsPulses.length-1;i>=0;i--){
+  const pulse=eplsPulses[i];
+  pulse.simAccumulator+=dt;
+  let impacted=false;
+  while(pulse.simAccumulator>=EPLS_SIM_STEP){
+   pulse.simAccumulator-=EPLS_SIM_STEP;
+   const previous=pulse.mesh.position.clone();
+   // Arcade field pulse: inherit aircraft velocity, then descend under a
+   // capped game gravity model. Downward speed never exceeds 10 m/s.
+   pulse.velocity.y=Math.max(-EPLS_PULSE_TERMINAL_DESCENT,
+    pulse.velocity.y-EPLS_PULSE_GRAVITY*EPLS_SIM_STEP);
+   pulse.mesh.position.addScaledVector(pulse.velocity,EPLS_SIM_STEP);
+   pulse.distance+=pulse.velocity.length()*EPLS_SIM_STEP;
+   const groundY=getGroundHeight(pulse.mesh.position.x,pulse.mesh.position.z);
+   if(pulse.mesh.position.y<=groundY+.18){
+    // Refine the segment/terrain crossing so sloped ground and hills are hit
+    // at the surface rather than at the next coarse simulation sample.
+    let lo=0,hi=1;
+    const contact=new THREE.Vector3();
+    for(let n=0;n<18;n++){
+     const mid=(lo+hi)*.5;
+     contact.lerpVectors(previous,pulse.mesh.position,mid);
+     if(contact.y>getGroundHeight(contact.x,contact.z)+.18)lo=mid;else hi=mid;
+    }
+    contact.lerpVectors(previous,pulse.mesh.position,hi);
+    contact.y=getGroundHeight(contact.x,contact.z);
+    createEPLSGroundImpact(contact);
+    scene.remove(pulse.mesh);
+    eplsPulses.splice(i,1);
+    impacted=true;
+    break;
+   }
+   if(pulse.distance>=EPLS_PULSE_MAX_DISTANCE){
+    scene.remove(pulse.mesh);
+    eplsPulses.splice(i,1);
+    impacted=true;
+    break;
+   }
+  }
+  if(impacted)continue;
+ }
+ for(let i=eplsImpactFlashes.length-1;i>=0;i--){
+  const effect=eplsImpactFlashes[i];
+  effect.life-=dt;
+  const progress=1-Math.max(0,effect.life)/effect.maxLife;
+  const fade=1-progress;
+  const ringScale=.8+progress*9.5;
+  effect.ring.scale.set(ringScale,ringScale,ringScale);
+  effect.core.scale.setScalar(1+progress*3.5);
+  effect.beam.scale.y=7*(1-progress*.72);
+  effect.ring.material.opacity=fade;
+  effect.core.material.opacity=fade*.95;
+  effect.beam.material.opacity=fade*.72;
+  if(effect.life<=0){
+   scene.remove(effect.mesh);
+   for(const material of effect.materials)material.dispose();
+   eplsImpactFlashes.splice(i,1);
+  }
+ }
+}
+
+const flaps=[];
+for(const side of [-1,1]){
+ const hinge=new THREE.Group();
+ // Hinge lies along the wing's rear section. The flap is a thin shaped panel
+ // sharing the wing surface, not a separate chunky box hanging below it.
+ hinge.position.set(side*1.68,.035,.36);
+ const flapShape=new THREE.Shape();
+ flapShape.moveTo(0,-.015);
+ flapShape.lineTo(side*2.08,-.015);
+ flapShape.quadraticCurveTo(side*2.12,.10,side*2.08,.45);
+ flapShape.lineTo(0,.45);
+ flapShape.lineTo(0,-.015);
+ const flapGeometry=new THREE.ExtrudeGeometry(flapShape,{depth:.12,bevelEnabled:true,bevelSegments:3,steps:1,bevelSize:.025,bevelThickness:.02,curveSegments:16});
+ flapGeometry.translate(0,0,-.0375);
+ flapGeometry.rotateX(Math.PI/2);
+ const panel=new THREE.Mesh(flapGeometry,flapMaterial);
+ panel.material.side=THREE.DoubleSide;
+ panel.position.y=.004;
+ panel.castShadow=true;panel.receiveShadow=true;hinge.add(panel);
+ const flapOutline=new THREE.LineSegments(
+ new THREE.EdgesGeometry(flapGeometry),
+ new THREE.LineBasicMaterial({color:0x52616a,transparent:true,opacity:.48,depthWrite:false})
+);
+flapOutline.position.y=.007;
+hinge.add(flapOutline);
+const hingeBar=new THREE.Mesh(new THREE.CylinderGeometry(.014,.014,2.08,10),detailMat);
+ hingeBar.rotation.z=Math.PI/2;
+ hingeBar.position.set(side*1.04,.012,0);
+ hinge.add(hingeBar);
+ plane.add(hinge);flaps.push(hinge);
+}
+let landingLightEnabled=false;
+const landingSpot=new THREE.SpotLight(0xffdfbd,0,3200,Math.PI/6,.72,1.2);
+landingSpot.position.set(0,-.05,-3.65);
+landingSpot.castShadow=false;
+plane.add(landingSpot);
+const landingTarget=new THREE.Object3D();
+landingTarget.position.set(0,-83.4,-220);
+plane.add(landingTarget);
+landingSpot.target=landingTarget;
+function setLandingLight(enabled){
+ landingLightEnabled=!!enabled;
+ landingSpot.intensity=landingLightEnabled?60000:0;
+ landingSpot.distance=3200;
+ landingSpot.decay=1.2;
+ landingSpot.angle=Math.PI/6;
+ landingSpot.penumbra=.72;
+ landingSpot.color.set(0xffdfbd);
+ const b=document.getElementById('landingLightToggle');
+ b.textContent=`LANDING LIGHT: ${landingLightEnabled?'ON':'OFF'}`;
+ b.setAttribute('aria-pressed',String(landingLightEnabled));
+}
+
+// Ground-contact smoke used by the landing/collision feedback system.
+const groundSmoke=[];
+function spawnGroundSmoke(x,y,z){
+ const plume={baseX:x,baseY:y,baseZ:z,age:0,lifetime:12,particles:[]};
+ for(let i=0;i<9;i++){
+  const geometry=new THREE.SphereGeometry(1,10,8);
+  const material=new THREE.MeshBasicMaterial({
+   color:0x626970,transparent:true,opacity:0,depthWrite:false
+  });
+  const mesh=new THREE.Mesh(geometry,material);
+  mesh.position.set(x,y,z);
+  scene.add(mesh);
+  plume.particles.push({
+   mesh,material,delay:i*.28,baseY:i*.18,baseR:.42+i*.055,seed:i*1.71
+  });
+ }
+ groundSmoke.push(plume);
+}
+// Reusable vector for the predicted terrain contact point.
+const predictedContact=new THREE.Vector3();
+function predictAircraftGroundContact(acceleration){
+ const p=plane.position.clone();
+ const v=velocity.clone();
+ const a=acceleration.clone();
+ const step=.04;
+ const maxTime=12;
+ for(let t=0;t<maxTime;t+=step){
+  const previous=p.clone();
+  v.addScaledVector(a,step);
+  p.addScaledVector(v,step);
+  const ground=getGroundHeight(p.x,p.z)+GROUND_CLEARANCE;
+  if(p.y<=ground){
+   const oldClear=previous.y-(getGroundHeight(previous.x,previous.z)+GROUND_CLEARANCE);
+   const newClear=p.y-ground;
+   const denom=oldClear-newClear;
+   const f=denom>1e-8?THREE.MathUtils.clamp(oldClear/denom,0,1):1;
+   predictedContact.set(
+    THREE.MathUtils.lerp(previous.x,p.x,f),0,
+    THREE.MathUtils.lerp(previous.z,p.z,f)
+   );
+   predictedContact.y=getGroundHeight(predictedContact.x,predictedContact.z);
+   return predictedContact;
+  }
+ }
+ return null;
+}
+function updateSmoke(dt){
+ for(let i=groundSmoke.length-1;i>=0;i--){
+  const plume=groundSmoke[i];
+  plume.age+=dt;
+  const life=Math.min(1,plume.age/plume.lifetime);
+  for(const part of plume.particles){
+   const t=Math.max(0,plume.age-part.delay);
+   const rise=Math.min(1,t/8);
+   const spread=1+rise*1.8;
+   const swirl=Math.sin(t*.65+part.seed)*.22;
+   part.mesh.position.set(
+    plume.baseX+swirl,
+    plume.baseY+part.baseY+t*1.7,
+    plume.baseZ+Math.cos(t*.5+part.seed)*.16
+   );
+   const r=part.baseR*spread;
+   part.mesh.scale.set(r*.72,r*1.25,r*.72);
+   part.material.opacity=Math.max(0,(.72-life*.72)*Math.min(1,t*3));
+   const shade=.18+life*.38;
+   part.material.color.setRGB(shade,shade,shade+.015);
+  }
+  if(plume.age>=plume.lifetime){
+   for(const part of plume.particles){
+    scene.remove(part.mesh);
+    part.mesh.geometry.dispose();
+    part.material.dispose();
+   }
+   groundSmoke.splice(i,1);
+  }
+ }
+}
+const cameraTarget=new THREE.Vector3();
+const cameraOffset=new THREE.Vector3();
+const desiredCamera=new THREE.Vector3();
+const cameraAircraftRotation=new THREE.Quaternion();
+let cameraYaw=0,cameraPitch=.16;
+let cameraYawCurrent=0,cameraPitchCurrent=.16;
+let cameraDistance=18,cameraDistanceCurrent=18;
+const MIN_CAMERA_DISTANCE=5;
+const MAX_CAMERA_DISTANCE=1800;
+const CAMERA_DRAG_SENSITIVITY=.0052;
+const CAMERA_PITCH_SENSITIVITY=.0044;
+const pointers=new Map();
+let lastPinchDistance=0;
+function clamp(v,min,max){
+ return Math.max(min,Math.min(max,v));
+}
+function updateHangarPreviewCamera(dt=1/60){
+ const blend=1-Math.exp(-8*dt);
+ cameraYawCurrent+=(cameraYaw-cameraYawCurrent)*blend;
+ cameraPitchCurrent+=(cameraPitch-cameraPitchCurrent)*blend;
+ cameraDistanceCurrent+=(cameraDistance-cameraDistanceCurrent)*(1-Math.exp(-8*dt));
+ cameraTarget.copy(plane.position).add(new THREE.Vector3(0,.35,0));
+ const cp=Math.cos(cameraPitchCurrent);
+ cameraOffset.set(Math.sin(cameraYawCurrent)*cp*cameraDistanceCurrent,
+  Math.sin(cameraPitchCurrent)*cameraDistanceCurrent,
+  Math.cos(cameraYawCurrent)*cp*cameraDistanceCurrent);
+ desiredCamera.copy(cameraTarget).add(cameraOffset);
+ camera.position.copy(desiredCamera);
+ camera.up.set(0,1,0);camera.lookAt(cameraTarget);camera.updateMatrixWorld(true);
+}
+function updateChaseCamera(snap=false,dt=1/60){
+ const blend=snap?1:1-Math.exp(-13*dt);
+ const zoomBlend=snap?1:1-Math.exp(-10*dt);
+ cameraYawCurrent+=(cameraYaw-cameraYawCurrent)*blend;
+  cameraPitchCurrent+=(cameraPitch-cameraPitchCurrent)*blend;
+ cameraDistanceCurrent+=(cameraDistance-cameraDistanceCurrent)*zoomBlend;
+ cameraTarget.copy(plane.position);
+ const cp=Math.cos(cameraPitchCurrent);
+ cameraOffset.set(
+  Math.sin(cameraYawCurrent)*cp*cameraDistanceCurrent,
+  Math.sin(cameraPitchCurrent)*cameraDistanceCurrent,
+  Math.cos(cameraYawCurrent)*cp*cameraDistanceCurrent
+ );
+ cameraOffset.applyQuaternion(cameraAircraftRotation.copy(plane.quaternion));
+ desiredCamera.copy(cameraTarget).add(cameraOffset);
+ if(snap)camera.position.copy(desiredCamera);
+ else camera.position.lerp(desiredCamera,1-Math.exp(-12*dt));
+ camera.up.set(0,1,0);
+ camera.lookAt(cameraTarget);
+ camera.updateMatrixWorld(true);
+}
+
+/* ============================================================
+   FOLDABLE TERRAIN RADAR — 800 m, aircraft-centered, 0.75 s update
+   ============================================================ */
+const radarToggle=document.getElementById('radarToggle');
+const radarPanel=document.getElementById('radarPanel');
+const radarCanvas=document.getElementById('radarCanvas');
+const radarCtx=radarCanvas.getContext('2d');
+let radarOpen=false;
+let lastRadarDraw=0;
+radarToggle.addEventListener('click',()=>{
+ radarOpen=!radarOpen;radarPanel.classList.toggle('open',radarOpen);
+ radarToggle.setAttribute('aria-expanded',String(radarOpen));radarToggle.textContent=radarOpen?'RADAR ‹':'RADAR ›';
+ if(radarOpen){drawTerrainRadar();lastRadarDraw=performance.now();}
+});
+function drawTerrainRadar(){
+ if(!radarOpen||!radarCtx)return;
+ const ctx=radarCtx,w=radarCanvas.width,h=radarCanvas.height,cx=w/2,cy=h/2,R=190,range=800;
+ ctx.clearRect(0,0,w,h);ctx.fillStyle='#07111b';ctx.fillRect(0,0,w,h);
+ ctx.save();ctx.beginPath();ctx.arc(cx,cy,R,0,Math.PI*2);ctx.clip();
+ ctx.strokeStyle='rgba(119,180,208,.35)';ctx.lineWidth=1;
+ for(const radius of [R*.25,R*.5,R*.75,R]){ctx.beginPath();ctx.arc(cx,cy,radius,0,Math.PI*2);ctx.stroke();}
+ ctx.beginPath();ctx.moveTo(cx-R,cy);ctx.lineTo(cx+R,cy);ctx.moveTo(cx,cy-R);ctx.lineTo(cx,cy+R);ctx.stroke();
+ const forward=new THREE.Vector3(0,0,-1).applyQuaternion(plane.quaternion).setY(0).normalize();
+ const right=new THREE.Vector3(1,0,0).applyQuaternion(plane.quaternion).setY(0).normalize();
+ const cell=8,steps=48,groundReference=plane.position.y;
+ for(let iz=0;iz<steps;iz++)for(let ix=0;ix<steps;ix++){
+  const localX=((ix+.5)/steps*2-1)*range;
+  const localForward=(1-(iz+.5)/steps*2)*range;
+  const worldX=plane.position.x+right.x*localX+forward.x*localForward;
+  const worldZ=plane.position.z+right.z*localX+forward.z*localForward;
+  const terrainY=getTerrainHeight(worldX,worldZ);
+  const relative=terrainY-groundReference;
+  if(relative>0){
+   const px=cx+(localX/range)*R,py=cy-(localForward/range)*R;
+   const alpha=clamp(.24+relative/360,.24,.9);
+   ctx.fillStyle='rgba(244,249,255,'+alpha+')';ctx.fillRect(px-cell/2,py-cell/2,cell,cell);
+   ctx.strokeStyle='rgba(31,48,61,.78)';ctx.lineWidth=1;
+   ctx.beginPath();ctx.moveTo(px-cell/2,py+cell/2);ctx.lineTo(px+cell/2,py-cell/2);ctx.stroke();
+  }
+ }
+ ctx.restore();
+ // Compass labels rotate with heading: the map remains aircraft-forward-up.
+ const headingDeg=(THREE.MathUtils.radToDeg(Math.atan2(-forward.x,-forward.z))+360)%360;
+ const labels=['N','E','S','W'];
+ for(let i=0;i<4;i++){
+  const angle=(-headingDeg+i*90)*Math.PI/180;
+  const x=cx+Math.sin(angle)*(R+17),y=cy-Math.cos(angle)*(R+17);
+  ctx.fillStyle='#eaf6ff';ctx.font='bold 18px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(labels[i],x,y);
+ }
+ // Aircraft symbol stays fixed at the center; nose points toward the top.
+ ctx.fillStyle='#56dcff';ctx.strokeStyle='#e7fbff';ctx.lineWidth=2;
+ ctx.beginPath();ctx.moveTo(cx,cy-15);ctx.lineTo(cx-10,cy+10);ctx.lineTo(cx,cy+5);ctx.lineTo(cx+10,cy+10);ctx.closePath();ctx.fill();ctx.stroke();
+ ctx.fillStyle='#dff6ff';ctx.font='12px ui-monospace,monospace';ctx.textAlign='left';ctx.fillText('0 m',cx+13,cy+17);
+ ctx.fillStyle='#a9c7d9';ctx.font='11px ui-monospace,monospace';ctx.textAlign='right';ctx.fillText('800 m',w-12,h-12);
+}
+
+const scopeElement=document.getElementById('eplsScope');
+const scopeToggleButton=document.getElementById('scopeToggle');
+let currentScopeMode='air-to-ground';
+function setScopeMode(mode){
+ currentScopeMode=mode==='air-to-air'?'air-to-air':'air-to-ground';
+ const airToAir=currentScopeMode==='air-to-air';
+ scopeElement.dataset.mode=currentScopeMode;
+ scopeElement.dataset.label=airToAir?'EPLS · AIR-TO-AIR':'EPLS · AIR-TO-GROUND';
+ scopeElement.style.filter='drop-shadow(0 0 4px #003b18)';
+ const color='#45ff75';
+ scopeElement.querySelectorAll('.scope-corner,.scope-cross-x,.scope-cross-y,.scope-center-hole').forEach(el=>{
+  el.style.borderColor=color;
+  el.style.backgroundColor=el.classList.contains('scope-cross-x')||el.classList.contains('scope-cross-y')?color:'';
+ });
+ scopeElement.style.setProperty('--scope-color',color);
+ scopeToggleButton.textContent=airToAir?'AIR-TO-GROUND':'AIR-TO-AIR';
+ scopeToggleButton.setAttribute('aria-label',airToAir?'Switch to air-to-ground scope (B)':'Switch to air-to-air scope (B)');
+ scopeElement.style.display='block';
+}
+function toggleScopeMode(){
+ setScopeMode(currentScopeMode==='air-to-air'?'air-to-ground':'air-to-air');
+}
+scopeToggleButton.addEventListener('click',toggleScopeMode);
+const eplsScopeProjection=new THREE.Vector3();
+function updateScope(){
+ // Project the predicted world-space destination into the actual camera view.
+ // This makes the HUD reticle indicate the predicted pulse destination, not aircraft centre.
+ const prediction=predictEPLSScopePoint();
+ eplsPredictionGroup.visible=!!prediction;
+ if(!prediction){scopeElement.style.display='none';return;}
+ eplsPredictionGroup.position.copy(prediction.point);
+ eplsPredictionGroup.userData.predictionKind=prediction.kind;
+ camera.updateMatrixWorld(true);
+ eplsScopeProjection.copy(prediction.point).applyMatrix4(camera.matrixWorldInverse);
+ const behind=eplsScopeProjection.z>=0;
+ const projected=prediction.point.clone().project(camera);
+ let nx=projected.x,ny=projected.y;
+ if(behind){nx=-nx;ny=-ny;}
+ const rawX=(nx*.5+.5)*innerWidth;
+ const rawY=(-ny*.5+.5)*innerHeight;
+ const margin=36;
+ const x=clamp(rawX,margin,innerWidth-margin);
+ const y=clamp(rawY,margin,innerHeight-margin);
+ const offscreen=behind||rawX<margin||rawX>innerWidth-margin||rawY<margin||rawY>innerHeight-margin||projected.z>1;
+ scopeElement.style.left=x+'px';
+ scopeElement.style.top=y+'px';
+ scopeElement.dataset.edge=offscreen?'true':'false';
+ scopeElement.dataset.label=prediction.kind==='sphere'
+  ?'EPLS · 500 M RANGE'
+  :prediction.kind==='ground-scan'?'EPLS · GROUND SCAN':'EPLS · GROUND CONTACT';
+ scopeElement.style.display='block';
+}
+setScopeMode('air-to-ground');
+
+const keys={};
+let throttle=.05;
+let flapsOn=false;
+let gearDown=true;
+let velocity=new THREE.Vector3(0,0,-.5);
+let pitchRate=0;
+let rollRate=0;
+let yawRate=0;
+let hardLanding=false;
+let contactLatched=false;
+let waterSinking=false;
+let waterSubmerged=false;
+let waterSinkTimer=0;
+function reset(){
+ propDamaged=false;
+ propAngularSpeed=0;
+ plane.position.set(0,getGroundHeight(0,850)+GROUND_CLEARANCE+.7,850);
+ plane.rotation.set(0,0,0);
+ velocity.set(0,0,-.5);
+ pitchRate=rollRate=yawRate=0;
+ throttle=.05;
+ flapsOn=false;
+ gearDown=true;
+ hardLanding=false;
+ contactLatched=false;
+ waterSinking=false;
+ waterSubmerged=false;
+ waterSinkTimer=0;
+ document.getElementById('waterState').textContent='DRY';
+ flaps.forEach(f=>f.rotation.x=0);
+ wheels.forEach(w=>w.visible=true);
+ for(const plume of groundSmoke){
+  for(const part of plume.particles){
+   scene.remove(part.mesh);
+   part.mesh.geometry.dispose();
+   part.material.dispose();
+  }
+ }
+ groundSmoke.length=0;
+ for(const pulse of eplsPulses)scene.remove(pulse.mesh);
+ eplsPulses.length=0;
+ eplsPredictionGroup.visible=false;
+ for(const effect of eplsImpactFlashes){
+  scene.remove(effect.mesh);
+  for(const material of effect.materials)material.dispose();
+ }
+ eplsImpactFlashes.length=0;
+ eplsFireAccumulator=0;
+ eplsWasFiring=false;
+ keys.space=false;
+ document.getElementById('eplsStatus').textContent='STANDBY';
+ document.getElementById('eplsFireButton').classList.remove('firing');
+ cameraYaw=cameraYawCurrent=0;
+ cameraPitch=cameraPitchCurrent=.16;
+ cameraDistance=cameraDistanceCurrent=18;
+ updateTerrainChunks();
+ updateChaseCamera(true);
+ document.getElementById('message').textContent='Click the simulator to start flying';
+ document.getElementById('contactState').textContent='CLEAR';
+ syncThrottleSlider();
+}
+const settingsToggle=document.getElementById('settingsToggle');
+const settingsPanel=document.getElementById('settingsPanel');
+const timeOfDay=document.getElementById('timeOfDay');
+const lightingDescription=document.getElementById('lightingDescription');
+function setTimeOfDay(mode){
+ const night=mode==='night';
+ scene.background.set(night?0x071426:0x86c9ef);
+ scene.fog.color.set(night?0x071426:0x86c9ef);
+ hemiLight.color.set(night?0x243c70:0xd7edff);
+ hemiLight.groundColor.set(night?0x10182a:0x475a39);
+ hemiLight.intensity=night?.42:2;
+ sun.color.set(night?0x8ba9ff:0xfff0d4);
+ sun.intensity=night?.28:3;
+ renderer.toneMappingExposure=night?.88:1.15;
+ lightingDescription.textContent=night?'Dark night with cool moonlight':'Bright daylight lighting';
+ setLandingLight(night);
+}
+settingsToggle.addEventListener('click',()=>{
+ const open=!settingsPanel.classList.contains('open');
+ settingsPanel.classList.toggle('open',open);
+ settingsToggle.setAttribute('aria-expanded',String(open));
+ settingsToggle.textContent=open?'SETTINGS ‹':'SETTINGS ›';
+});
+timeOfDay.addEventListener('change',()=>setTimeOfDay(timeOfDay.value));
+document.getElementById('landingLightToggle').addEventListener('click',()=>setLandingLight(!landingLightEnabled));
+setTimeOfDay('day');
+function keyName(e){
+ return e.key===' '?'space':e.key.toLowerCase();
+}
+addEventListener('keydown',e=>{
+ const key=keyName(e);
+ keys[key]=true;
+ if(['arrowup','arrowdown','arrowleft','arrowright','space'].includes(key))e.preventDefault();
+ if(e.repeat)return;
+ if(key==='f'){
+  flapsOn=!flapsOn;
+  flaps.forEach(f=>f.rotation.x=flapsOn?-.32:0);
+ }
+ if(key==='g'){
+  gearDown=!gearDown;
+  wheels.forEach(w=>w.visible=gearDown);
+ }
+ if(key==='r')reset();
+ if(key==='b')toggleScopeMode();
+});
+addEventListener('keyup',e=>{keys[keyName(e)]=false;});
+const keysToggle=document.getElementById('keysToggle');
+const keysPanel=document.getElementById('keysPanel');
+const throttleSlider=document.getElementById('throttleSlider');
+const throttleValue=document.getElementById('throttleValue');
+keysToggle.addEventListener('click',()=>{
+ const open=!keysPanel.classList.contains('open');
+ keysPanel.classList.toggle('open',open);
+ keysToggle.setAttribute('aria-expanded',String(open));
+ keysToggle.textContent=open?'KEYS ‹':'KEYS ›';
+ if(!open){
+  document.querySelectorAll('[data-hold]').forEach(b=>{
+   keys[b.dataset.hold]=false;
+   b.classList.remove('pressed');
+  });
+ }
+});
+document.querySelectorAll('[data-hold]').forEach(button=>{
+ const key=button.dataset.hold;
+ function release(){
+  keys[key]=false;
+  button.classList.remove('pressed');
+ }
+ button.addEventListener('pointerdown',e=>{
+  e.preventDefault();
+  keys[key]=true;
+  button.classList.add('pressed');
+  try{button.setPointerCapture(e.pointerId)}catch(_){}
+ });
+ button.addEventListener('pointerup',release);
+ button.addEventListener('pointercancel',release);
+ button.addEventListener('lostpointercapture',release);
+ button.addEventListener('contextmenu',e=>e.preventDefault());
+});
+function syncThrottleSlider() {
+ const percentage = Math.round(throttle * 100);
+ throttleSlider.value = String(percentage);
+ // Use ordinary concatenation so no template-string placeholder can leak into the HUD.
+ throttleValue.textContent = String(percentage) + '%';
+}
+throttleSlider.addEventListener('input',()=>{
+ throttle=clamp(Number(throttleSlider.value)/100,0,1);
+ syncThrottleSlider();
+});
+// Some mobile browsers render vertical range inputs but fail to drag their thumb.
+// Map touch/pen/mouse pointer Y directly to the range value as a reliable fallback.
+let throttlePointerId=null;
+function setThrottleFromPointer(clientY){
+ const rect=throttleSlider.getBoundingClientRect();
+ if(!rect.height)return;
+ const fraction=clamp(1-(clientY-rect.top)/rect.height,0,1);
+ throttle=fraction;
+ syncThrottleSlider();
+}
+throttleSlider.addEventListener('pointerdown',e=>{
+ if(e.pointerType==='mouse'&&e.button!==0)return;
+ e.preventDefault();
+ throttlePointerId=e.pointerId;
+ setThrottleFromPointer(e.clientY);
+ try{throttleSlider.setPointerCapture(e.pointerId)}catch(_){}
+});
+throttleSlider.addEventListener('pointermove',e=>{
+ if(throttlePointerId!==e.pointerId)return;
+ e.preventDefault();
+ setThrottleFromPointer(e.clientY);
+});
+function endThrottlePointer(e){
+ if(throttlePointerId!==e.pointerId)return;
+ throttlePointerId=null;
+}
+throttleSlider.addEventListener('pointerup',endThrottlePointer);
+throttleSlider.addEventListener('pointercancel',endThrottlePointer);
+throttleSlider.addEventListener('lostpointercapture',endThrottlePointer);
+document.querySelectorAll('[data-action]').forEach(button=>{
+ button.addEventListener('click',e=>{
+  e.preventDefault();
+  const action=button.dataset.action;
+  if(action==='f'){
+   flapsOn=!flapsOn;
+   flaps.forEach(f=>f.rotation.x=flapsOn?-.32:0);
+  }else if(action==='g'){
+   gearDown=!gearDown;
+   wheels.forEach(w=>w.visible=gearDown);
+  }else if(action==='light'){
+   setLandingLight(!landingLightEnabled);
+  }else if(action==='r'){
+   reset();
+  }
+ });
+});
+const eplsFireButton=document.getElementById('eplsFireButton');
+function releaseEPLSFire(){
+ keys.space=false;
+ eplsFireButton.classList.remove('firing');
+}
+eplsFireButton.addEventListener('pointerdown',e=>{
+ e.preventDefault();
+ keys.space=true;
+ eplsFireButton.classList.add('firing');
+ try{eplsFireButton.setPointerCapture(e.pointerId)}catch(_){}
+});
+eplsFireButton.addEventListener('pointerup',releaseEPLSFire);
+eplsFireButton.addEventListener('pointercancel',releaseEPLSFire);
+eplsFireButton.addEventListener('lostpointercapture',releaseEPLSFire);
+addEventListener('pointerup',releaseEPLSFire);
+addEventListener('blur',releaseEPLSFire);
+renderer.domElement.addEventListener('click',()=>{
+ document.getElementById('message').textContent=
+  'FLIGHT SIMULATION ACTIVE — drag to orbit around the aircraft center, pinch or scroll to zoom';
+});
+const canvas=renderer.domElement;
+canvas.style.touchAction='none';
+function pointerGap(){
+ const p=Array.from(pointers.values());
+ return p.length<2?0:Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y);
+}
+canvas.addEventListener('pointerdown',e=>{
+ if(e.pointerType==='mouse'&&e.button!==0&&e.button!==2)return;
+ e.preventDefault();
+ try{canvas.setPointerCapture(e.pointerId)}catch(_){}
+ pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+ if(pointers.size>=2)lastPinchDistance=pointerGap();
+});
+canvas.addEventListener('pointermove',e=>{
+ if(!pointers.has(e.pointerId))return;
+ e.preventDefault();
+ const old=pointers.get(e.pointerId);
+ const dx=e.clientX-old.x;
+ const dy=e.clientY-old.y;
+ pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+ if(pointers.size>=2){
+  const gap=pointerGap();
+  if(lastPinchDistance>0&&gap>0){
+   cameraDistance=clamp(cameraDistance*lastPinchDistance/gap,MIN_CAMERA_DISTANCE,MAX_CAMERA_DISTANCE);
+  }
+  lastPinchDistance=gap;
+ }else{
+  cameraYaw-=dx*CAMERA_DRAG_SENSITIVITY;
+  cameraPitch=clamp(cameraPitch+dy*CAMERA_PITCH_SENSITIVITY,-1.2,1.2);
+ }
+});
+function releasePointer(e){
+ pointers.delete(e.pointerId);
+ if(pointers.size<2)lastPinchDistance=0;
+}
+canvas.addEventListener('pointerup',releasePointer);
+canvas.addEventListener('pointercancel',releasePointer);
+canvas.addEventListener('lostpointercapture',releasePointer);
+canvas.addEventListener('contextmenu',e=>e.preventDefault());
+canvas.addEventListener('wheel',e=>{
+ e.preventDefault();
+ cameraDistance=clamp(cameraDistance*Math.exp(e.deltaY*.0011),MIN_CAMERA_DISTANCE,MAX_CAMERA_DISTANCE);
+},{passive:false});
+const forward=new THREE.Vector3();
+const localVelocity=new THREE.Vector3();
+const airVelocity=new THREE.Vector3();
+const airDirection=new THREE.Vector3();
+const wingNormal=new THREE.Vector3();
+const liftDirection=new THREE.Vector3();
+const windVelocity=new THREE.Vector3();
+const AIRCRAFT_MASS=1000;
+const WING_AREA=16;
+const AIR_DENSITY=1.225;
+const MAX_THRUST=12000;
+const ZERO_LIFT_AOA=THREE.MathUtils.degToRad(-2);
+const BASE_STALL_AOA=THREE.MathUtils.degToRad(15);
+const LIFT_CURVE_SLOPE=5.2;
+const BASE_CL_MAX=1.5;
+const INDUCED_DRAG_FACTOR=.045;
+const ZERO_LIFT_DRAG=.032;
+function smoothstep01(x){
+ x=clamp(x,0,1);
+ return x*x*(3-2*x);
+}
+function calculateLiftCoefficient(aoa,flapsAreOn){
+ const stallAngle=BASE_STALL_AOA+(flapsAreOn?THREE.MathUtils.degToRad(3):0);
+ const clMax=BASE_CL_MAX+(flapsAreOn?.3:0);
+ let cl=LIFT_CURVE_SLOPE*(aoa-ZERO_LIFT_AOA);
+ if(flapsAreOn&&aoa>0)cl+=.3;
+ cl=clamp(cl,-clMax,clMax);
+ const progress=(Math.abs(aoa)-stallAngle)/THREE.MathUtils.degToRad(12);
+ if(progress>0)cl*=1-.68*smoothstep01(progress);
+ return {cl,stalled:Math.abs(aoa)>stallAngle};
+}
+function update(dt){
+ if(keys.arrowup)throttle=clamp(throttle+dt*.3,0,1);
+ if(keys.arrowdown)throttle=clamp(throttle-dt*.3,0,1);
+ const speed=velocity.length();
+ const control=clamp(speed/18,.12,1);
+ const targetPitch=((keys.s?1:0)-(keys.w?1:0))*.9*control;
+ const targetRoll=((keys.a?1:0)-(keys.d?1:0))*1.2*control;
+ const targetYaw=(((keys.q||keys.arrowleft)?1:0)-((keys.e||keys.arrowright)?1:0))*.55*control;
+ pitchRate+=(targetPitch-pitchRate)*dt*2.5;
+ rollRate+=(targetRoll-rollRate)*dt*2.5;
+ yawRate+=(targetYaw-yawRate)*dt*1.5;
+ plane.rotateX(pitchRate*dt);
+ plane.rotateZ(rollRate*dt);
+ plane.rotateY(yawRate*dt);
+ airVelocity.copy(velocity).sub(windVelocity);
+ const airspeed=airVelocity.length();
+ localVelocity.copy(airVelocity).applyQuaternion(plane.quaternion.clone().invert());
+ const forwardAirSpeed=Math.max(.5,-localVelocity.z);
+ const aoa=Math.atan2(-localVelocity.y,forwardAirSpeed);
+ const aero=calculateLiftCoefficient(aoa,flapsOn);
+ const q=.5*AIR_DENSITY*airspeed*airspeed;
+ const liftForce=q*WING_AREA*aero.cl;
+ wingNormal.set(0,1,0).applyQuaternion(plane.quaternion).normalize();
+ airDirection.copy(airVelocity);
+ if(airspeed>.01)airDirection.multiplyScalar(1/airspeed);
+ liftDirection.copy(wingNormal).addScaledVector(airDirection,-wingNormal.dot(airDirection));
+ if(liftDirection.lengthSq()>1e-6)liftDirection.normalize();
+ else liftDirection.copy(wingNormal);
+ const dragCoefficient=ZERO_LIFT_DRAG+
+  INDUCED_DRAG_FACTOR*aero.cl*aero.cl+
+  (flapsOn?.025:0)+
+  (gearDown?.018:0);
+ const dragForce=q*WING_AREA*dragCoefficient;
+ const thrust=throttle*MAX_THRUST/AIRCRAFT_MASS;
+ const acceleration=new THREE.Vector3();
+ forward.set(0,0,-1).applyQuaternion(plane.quaternion).normalize();
+ acceleration.addScaledVector(forward,thrust);
+ if(airspeed>.01)acceleration.addScaledVector(airDirection,-dragForce/AIRCRAFT_MASS);
+ acceleration.addScaledVector(liftDirection,liftForce/AIRCRAFT_MASS);
+ acceleration.y-=9.81;
+ velocity.addScaledVector(acceleration,dt);
+ if(velocity.length()>220)velocity.setLength(220);
+ plane.position.addScaledVector(velocity,dt);
+ updateTerrainChunks();
+ const targetPropSpeed=8+throttle*92;
+ propAngularSpeed+=(targetPropSpeed-propAngularSpeed)*Math.min(1,dt*7);
+ prop.rotation.z+=propAngularSpeed*dt;
+ updateEPLS(dt);
+ const lakeUnderAircraft=lakeInfoAt(plane.position.x,plane.position.z);
+ const isOverWater=!waterSubmerged&&!!lakeUnderAircraft&&lakeUnderAircraft.radius<=1.0&&
+  plane.position.y<=lakeUnderAircraft.waterLevel+2.2&&
+  plane.position.y>=lakeUnderAircraft.waterLevel-30;
+ if(isOverWater){
+  waterSinking=true;
+  waterSinkTimer+=dt;
+  const depthBelowSurface=lakeUnderAircraft.waterLevel-plane.position.y;
+  const sinkRate=depthBelowSurface<1?1.5:2.4;
+  velocity.y=Math.min(velocity.y,-sinkRate);
+  velocity.x*=Math.max(0,1-1.8*dt);
+  velocity.z*=Math.max(0,1-1.15*dt);
+  plane.rotation.x*=Math.max(0,1-.45*dt);
+  plane.rotation.z*=Math.max(0,1-.45*dt);
+  throttle=0;
+  document.getElementById('waterState').textContent='SINKING';
+  document.getElementById('message').textContent='WATER ENTRY — aircraft sinking toward the lake bed';
+ }else if(waterSinking){
+  const currentLake=lakeInfoAt(plane.position.x,plane.position.z);
+  if(!currentLake||plane.position.y<getGroundHeight(plane.position.x,plane.position.z)+.8){
+   waterSinking=false;
+   waterSubmerged=true;
+   document.getElementById('waterState').textContent='SUBMERGED';
+  }
+ }else if(waterSubmerged){
+  document.getElementById('waterState').textContent='SUBMERGED';
+ }else{
+  document.getElementById('waterState').textContent='DRY';
+ }
+ let deepestPenetration=0;
+ let contactX=plane.position.x;
+ let contactZ=plane.position.z;
+ let contactY=plane.position.y;
+ for(const point of aircraftContactPoints){
+  contactWorld.copy(point).applyQuaternion(plane.quaternion).add(plane.position);
+  const penetration=getGroundHeight(contactWorld.x,contactWorld.z)+.08-contactWorld.y;
+  if(penetration>deepestPenetration){
+   deepestPenetration=penetration;
+   contactX=contactWorld.x;
+   contactZ=contactWorld.z;
+   contactY=getGroundHeight(contactX,contactZ);
+  }
+ }
+ if(deepestPenetration>0){
+  const impactSpeed=Math.max(0,-velocity.y);
+  plane.position.y+=deepestPenetration;
+  if(velocity.y<0)velocity.y=0;
+  if(waterSinking){
+   velocity.x=0;
+   velocity.z=0;
+   waterSinking=false;
+   waterSubmerged=true;
+   document.getElementById('waterState').textContent='SUBMERGED';
+   document.getElementById('message').textContent='AIRCRAFT SUBMERGED — press R to reset';
+  }
+  velocity.x*=Math.max(0,1-.9*dt);
+  velocity.z*=Math.max(0,1-.12*dt);
+  if(!contactLatched&&impactSpeed>3){
+   spawnGroundSmoke(contactX,contactY+.05,contactZ);
+   contactLatched=true;
+  }
+  if(impactSpeed>18&&speed>65){
+   hardLanding=true;
+   propDamaged=true;
+   velocity.multiplyScalar(.25);
+   document.getElementById('message').textContent='HARD LANDING — recover flight or press R to reset';
+  }
+ }
+ if(plane.position.y< -50)reset();
+ const clearOfGround=plane.position.y>
+  getGroundHeight(plane.position.x,plane.position.z)+GROUND_CLEARANCE+3;
+ if(clearOfGround&&velocity.y>1&&speed>35){
+  contactLatched=false;
+  hardLanding=false;
+ }
+ updateSmoke(dt);
+ const predicted=predictAircraftGroundContact(acceleration);
+ document.getElementById('contactState').textContent=predicted?'PREDICTED':'CLEAR';
+ plane.updateMatrixWorld(true);
+ updateChaseCamera(false,dt);
+ const kmh=Math.round(speed*3.6);
+ document.getElementById('speed').textContent=kmh;
+ document.getElementById('alt').textContent=Math.max(0,Math.round(plane.position.y));
+ document.getElementById('vs').textContent=velocity.y.toFixed(1);
+ const heading=(THREE.MathUtils.radToDeg(Math.atan2(-forward.x,-forward.z))+360)%360;
+ document.getElementById('hdg').textContent=String(Math.round(heading)).padStart(3,'0');
+ document.getElementById('aoa').textContent=THREE.MathUtils.radToDeg(aoa).toFixed(1);
+ document.getElementById('aero').textContent=airspeed<8?'LOW SPEED':aero.stalled?'STALL':'NORMAL';
+ document.getElementById('aero').style.color=aero.stalled&&airspeed>=8?'#ff8585':'#a9c4d9';
+ document.getElementById('thr').textContent=Math.round(throttle*100);
+ syncThrottleSlider();
+ document.getElementById('fill').style.width=throttle*100+'%';
+ document.getElementById('flap').textContent=flapsOn?'DEPLOYED':'OFF';
+ document.getElementById('gear').textContent=gearDown?'DOWN':'UP';
+ document.getElementById('state').textContent=
+  hardLanding?'HARD LANDING':
+  plane.position.y>getGroundHeight(plane.position.x,plane.position.z)+GROUND_CLEARANCE+3
+   ?'AIRBORNE':kmh>15?'TAXI':'GROUND';
+}
+reset();
+plane.position.set(0,hangarY+2.0,hangarZ+5);
+plane.rotation.set(0,0,0);
+cameraYaw=cameraYawCurrent=.52;cameraPitch=cameraPitchCurrent=.20;cameraDistance=cameraDistanceCurrent=25;
+updateHangarPreviewCamera(1/60);
+let last=performance.now();
+let runtimeErrorShown=false;
+function showRuntimeError(error){
+ if(runtimeErrorShown)return;
+ runtimeErrorShown=true;
+ const panel=document.createElement('div');
+ panel.style.cssText='position:fixed;left:12px;right:12px;bottom:12px;z-index:99999;padding:12px 14px;border:1px solid #ff8585;border-radius:10px;background:#260e14ee;color:#fff;font:12px/1.5 ui-monospace,monospace;white-space:pre-wrap;max-height:35vh;overflow:auto';
+ panel.textContent='SIMULATION ERROR — the scene is still being rendered, but an update failed:\n'+String(error?.stack||error);
+ document.body.appendChild(panel);
+ console.error(error);
+}
+function animate(now) {
+ requestAnimationFrame(animate);
+ const dt = Math.min((now - last) / 1000, 0.04);
+ last = now;
+
+ // Stream terrain continuously, including while the hangar menu is open.
+ try {
+  buildTerrainChunks(2);
+ } catch (error) {
+  showRuntimeError(error);
+ }
+
+ try {
+  renderer.render(scene, camera);
+ } catch (error) {
+  showRuntimeError(error);
+  return;
+ }
+
+ try {
+  if (document.body.classList.contains('menu-active')) {
+   prop.rotation.z += dt * 12;
+   updateHangarPreviewCamera(dt);
+  } else {
+   update(dt);
+   updateScope();
+   if(radarOpen&&now-lastRadarDraw>=750){drawTerrainRadar();lastRadarDraw=now;}
+  }
+ } catch (error) {
+  showRuntimeError(error);
+ }
+}
+requestAnimationFrame(animate);
+addEventListener('resize',()=>{
+ camera.aspect=innerWidth/innerHeight;
+ camera.updateProjectionMatrix();
+ renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>
+     
+
+  
